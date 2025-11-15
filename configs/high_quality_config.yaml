@@ -1,0 +1,38 @@
+# High-quality configuration for research/publication
+# More aggressive degradation for challenging dataset
+
+# Core pipeline parameters
+downsampling_factor: 4
+
+# Enhanced optical blur (stronger degradation)
+optical_sigma: 1.5      # Increased blur
+optical_kernel_size: 7  # Larger kernel
+
+# Enhanced motion blur
+motion_kernel_size: 5   # More motion blur
+
+# Enhanced noise
+enable_gaussian: true
+enable_poisson: true
+gaussian_mean: 0.0
+gaussian_std: 8.0       # Higher noise level
+poisson_lambda: 1.5     # More Poisson noise
+
+# Data parameters
+normalize: true
+target_dtype: "float32"
+
+# Larger patches for better context
+hr_patch_size: 512
+lr_patch_size: 128
+patch_stride: 256       # 50% overlap
+min_valid_pixels: 0.98  # Stricter quality requirement
+
+# Output parameters
+input_format: "geotiff"
+output_format: "npy"
+save_visualization: true
+
+# Logging
+log_level: "DEBUG"
+verbose: true

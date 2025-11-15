@@ -1,0 +1,12 @@
+Place your input HR GeoTIFF files here.
+
+Expected format:
+- GeoTIFF files (.tif or .tiff)
+- Single-channel panchromatic (PAN) images
+- WorldView-3 data from SpaceNet 2 dataset (AOI_3_Paris/PAN/)
+- High-resolution images (e.g., 1024x1024 or larger)
+
+Example files:
+- image_001.tif
+- image_002.tif
+- ...

@@ -1,0 +1,14 @@
+Generated LR patches will be saved here.
+
+Directory structure after processing:
+- image_001/
+  - image_001_000000_hr.npy
+  - image_001_000000_lr1.npy  
+  - image_001_000000_lr2.npy
+  - ...
+- image_002/
+  - ...
+- visualizations/
+  - image_001_degradation.png
+  - ...
+- processing_summary.txt

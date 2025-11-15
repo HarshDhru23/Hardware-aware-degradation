@@ -1,0 +1,222 @@
+"""
+Main degradation pipeline implementing the observation model:
+y_k = D * B_k * M_k * x + n_k
+
+This pipeline generates two LR images (LR1, LR2) from one HR image,
+simulating the P1 and P2 satellite sensors with (0.5, 0.5) pixel offset.
+"""
+
+import numpy as np
+from typing import Tuple, Dict, Optional, Any
+import logging
+from .operators import WarpingOperator, BlurOperator, DownsamplingOperator, NoiseOperator
+
+
+class DegradationPipeline:
+    """
+    Hardware-aware degradation pipeline for satellite sensor simulation.
+    
+    Implements the complete observation model to generate synthetic training data
+    for the ISRO Multi-Frame Super-Resolution project.
+    """
+    
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the degradation pipeline with configuration parameters.
+        
+        Args:
+            config: Configuration dictionary containing all pipeline parameters
+        """
+        self.config = config
+        self.downsampling_factor = config.get('downsampling_factor', 4)
+        
+        # Initialize operators for LR1 (P1 sensor - reference frame)
+        self.warp_lr1 = WarpingOperator(
+            shift_x=0.0,  # No shift for reference frame
+            shift_y=0.0
+        )
+        
+        self.blur_lr1 = BlurOperator(
+            optical_sigma=config.get('optical_sigma', 1.0),
+            optical_kernel_size=config.get('optical_kernel_size', 5),
+            motion_kernel_size=config.get('motion_kernel_size', 3)
+        )
+        
+        # Initialize operators for LR2 (P2 sensor - shifted frame)
+        # 0.5 LR pixel shift = 2.0 HR pixel shift for 4x factor
+        lr_shift = 0.5
+        hr_shift = lr_shift * self.downsampling_factor
+        
+        self.warp_lr2 = WarpingOperator(
+            shift_x=hr_shift,
+            shift_y=hr_shift
+        )
+        
+        self.blur_lr2 = BlurOperator(
+            optical_sigma=config.get('optical_sigma', 1.0),
+            optical_kernel_size=config.get('optical_kernel_size', 5),
+            motion_kernel_size=config.get('motion_kernel_size', 3)
+        )
+        
+        # Shared downsampling operator
+        self.downsample = DownsamplingOperator(
+            downsampling_factor=self.downsampling_factor
+        )
+        
+        # Noise operators (independent for each frame)
+        self.noise_lr1 = NoiseOperator(
+            gaussian_mean=config.get('gaussian_mean', 0.0),
+            gaussian_std=config.get('gaussian_std', 5.0),
+            poisson_lambda=config.get('poisson_lambda', 1.0),
+            enable_gaussian=config.get('enable_gaussian', True),
+            enable_poisson=config.get('enable_poisson', True)
+        )
+        
+        self.noise_lr2 = NoiseOperator(
+            gaussian_mean=config.get('gaussian_mean', 0.0),
+            gaussian_std=config.get('gaussian_std', 5.0),
+            poisson_lambda=config.get('poisson_lambda', 1.0),
+            enable_gaussian=config.get('enable_gaussian', True),
+            enable_poisson=config.get('enable_poisson', True)
+        )
+        
+        # Setup logging
+        self.logger = logging.getLogger(__name__)
+        
+    def generate_lr1(self, hr_image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """
+        Generate LR1 (reference frame) from HR image.
+        
+        Pipeline: x -> M_1 (identity) -> B_1 (blur) -> D (downsample) -> n_1 (noise) -> y_1
+        
+        Args:
+            hr_image: High-resolution input image (H, W) or (H, W, C)
+            seed: Random seed for noise reproducibility
+            
+        Returns:
+            LR1 image (H/factor, W/factor) or (H/factor, W/factor, C)
+        """
+        self.logger.debug("Generating LR1 (reference frame)")
+        
+        # Step 1: Warping (M_1) - Identity operation
+        warped = self.warp_lr1.apply(hr_image)
+        
+        # Step 2: Blurring (B_1) - Optical + Motion blur
+        blurred = self.blur_lr1.apply(warped)
+        
+        # Step 3: Downsampling with sensor PSF (D)
+        downsampled = self.downsample.apply(blurred)
+        
+        # Step 4: Add noise (n_1)
+        lr1 = self.noise_lr1.apply(downsampled, seed=seed)
+        
+        return lr1
+    
+    def generate_lr2(self, hr_image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """
+        Generate LR2 (shifted frame) from HR image.
+        
+        Pipeline: x -> M_2 (shift) -> B_2 (blur) -> D (downsample) -> n_2 (noise) -> y_2
+        
+        Args:
+            hr_image: High-resolution input image (H, W) or (H, W, C)
+            seed: Random seed for noise reproducibility
+            
+        Returns:
+            LR2 image (H/factor, W/factor) or (H/factor, W/factor, C)
+        """
+        self.logger.debug("Generating LR2 (shifted frame)")
+        
+        # Step 1: Warping (M_2) - (0.5, 0.5) LR pixel shift
+        warped = self.warp_lr2.apply(hr_image)
+        
+        # Step 2: Blurring (B_2) - Optical + Motion blur
+        blurred = self.blur_lr2.apply(warped)
+        
+        # Step 3: Downsampling with sensor PSF (D)
+        downsampled = self.downsample.apply(blurred)
+        
+        # Step 4: Add noise (n_2) - Independent noise
+        if seed is not None:
+            seed += 1  # Different seed for independent noise
+        lr2 = self.noise_lr2.apply(downsampled, seed=seed)
+        
+        return lr2
+    
+    def process_image(self, hr_image: np.ndarray, seed: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Process a single HR image to generate both LR1 and LR2.
+        
+        Args:
+            hr_image: High-resolution input image (H, W) or (H, W, C)
+            seed: Random seed for reproducible results
+            
+        Returns:
+            Tuple of (LR1, LR2) images
+        """
+        self.logger.info(f"Processing HR image of shape {hr_image.shape}")
+        
+        # Validate input
+        if len(hr_image.shape) not in [2, 3]:
+            raise ValueError(f"Input image must be 2D or 3D, got shape {hr_image.shape}")
+        
+        # Generate both LR images
+        lr1 = self.generate_lr1(hr_image, seed=seed)
+        lr2 = self.generate_lr2(hr_image, seed=seed)
+        
+        self.logger.info(f"Generated LR1: {lr1.shape}, LR2: {lr2.shape}")
+        
+        return lr1, lr2
+    
+    def get_config(self) -> Dict[str, Any]:
+        """Get current pipeline configuration."""
+        return self.config.copy()
+    
+    def update_config(self, new_config: Dict[str, Any]) -> None:
+        """
+        Update pipeline configuration and reinitialize operators.
+        
+        Args:
+            new_config: New configuration parameters
+        """
+        self.config.update(new_config)
+        
+        # Reinitialize operators with new config
+        self.__init__(self.config)
+        
+        self.logger.info("Pipeline configuration updated")
+    
+    def validate_image_dimensions(self, hr_image: np.ndarray) -> bool:
+        """
+        Validate that HR image dimensions are compatible with downsampling factor.
+        
+        Args:
+            hr_image: HR image to validate
+            
+        Returns:
+            True if dimensions are valid, False otherwise
+        """
+        if len(hr_image.shape) == 2:
+            h, w = hr_image.shape
+        else:
+            h, w, _ = hr_image.shape
+        
+        return (h % self.downsampling_factor == 0 and 
+                w % self.downsampling_factor == 0)
+    
+    def get_output_dimensions(self, hr_shape: Tuple[int, ...]) -> Tuple[int, ...]:
+        """
+        Calculate output LR dimensions given HR shape.
+        
+        Args:
+            hr_shape: Shape of HR image
+            
+        Returns:
+            Shape of output LR images
+        """
+        if len(hr_shape) == 2:
+            h, w = hr_shape
+            return (h // self.downsampling_factor, w // self.downsampling_factor)
+        else:
+            h, w, c = hr_shape
+            return (h // self.downsampling_factor, w // self.downsampling_factor, c)
