@@ -5,18 +5,18 @@
 downsampling_factor: 4
 
 # Enhanced optical blur (stronger degradation)
-optical_sigma: 1.5      # Increased blur
+optical_sigma: 1.2      # Increased blur
 optical_kernel_size: 7  # Larger kernel
 
 # Enhanced motion blur
-motion_kernel_size: 5   # More motion blur
+motion_kernel_size: 3   # Light motion blur
 
 # Enhanced noise
 enable_gaussian: true
-enable_poisson: true
+enable_poisson: false   # Disabled for normalized images
 gaussian_mean: 0.0
-gaussian_std: 8.0       # Higher noise level
-poisson_lambda: 1.5     # More Poisson noise
+gaussian_std: 0.02      # 2% noise level (for normalized images)
+poisson_lambda: 1.5     # Ignored when disabled
 
 # Data parameters
 normalize: true

@@ -7,7 +7,7 @@ y_k = D * B_k * M_k * x + n_k
 
 import numpy as np
 import cv2
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 from scipy import ndimage
 from scipy.ndimage import gaussian_filter
 import warnings
@@ -82,24 +82,25 @@ class BlurOperator:
     Motion blur: 1D vertical kernel (TDI velocity mismatch simulation)
     """
     
-    def __init__(self, 
-                 optical_sigma: float = 1.0,
-                 optical_kernel_size: int = 5,
-                 motion_kernel_size: int = 3):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialize blur operator.
+        Initialize blur operator from config.
         
         Args:
-            optical_sigma: Gaussian blur standard deviation (range: 0.5-3.0)
-            optical_kernel_size: Gaussian kernel size (range: 3-15, odd numbers)
-            motion_kernel_size: Motion blur kernel size (range: 1-9, odd numbers)
+            config: Configuration dictionary containing blur parameters
         """
-        self.optical_sigma = np.clip(optical_sigma, 0.5, 3.0)
-        self.optical_kernel_size = max(3, min(15, optical_kernel_size))
+        # Load values from config - these MUST match default_config.yaml
+        self.optical_sigma = config.get('optical_sigma', 0.8)
+        self.optical_kernel_size = config.get('optical_kernel_size', 5)
+        self.motion_kernel_size = config.get('motion_kernel_size', 3)
+        
+        # Validate and clip to safe ranges
+        self.optical_sigma = np.clip(self.optical_sigma, 0.5, 3.0)
+        self.optical_kernel_size = max(3, min(15, self.optical_kernel_size))
         if self.optical_kernel_size % 2 == 0:
             self.optical_kernel_size += 1
             
-        self.motion_kernel_size = max(1, min(9, motion_kernel_size))
+        self.motion_kernel_size = max(1, min(9, self.motion_kernel_size))
         if self.motion_kernel_size % 2 == 0:
             self.motion_kernel_size += 1
     
@@ -140,13 +141,15 @@ class DownsamplingOperator:
     2. Downsampling (undersampling)
     """
     
-    def __init__(self, downsampling_factor: int = 4):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialize downsampling operator.
+        Initialize downsampling operator from config.
         
         Args:
-            downsampling_factor: Downsampling factor (range: 2-8)
+            config: Configuration dictionary containing downsampling parameters
         """
+        # Load value from config - MUST match default_config.yaml
+        downsampling_factor = config.get('downsampling_factor', 4)
         self.factor = max(2, min(8, downsampling_factor))
     
     def apply(self, image: np.ndarray) -> np.ndarray:
@@ -196,27 +199,24 @@ class NoiseOperator:
     Poisson noise: Signal-dependent noise
     """
     
-    def __init__(self, 
-                 gaussian_mean: float = 0.0,
-                 gaussian_std: float = 5.0,
-                 poisson_lambda: float = 1.0,
-                 enable_gaussian: bool = True,
-                 enable_poisson: bool = True):
+    def __init__(self, config: Dict[str, Any]):
         """
-        Initialize noise operator.
+        Initialize noise operator from config.
         
         Args:
-            gaussian_mean: Gaussian noise mean (range: -10.0 to 10.0)
-            gaussian_std: Gaussian noise standard deviation (range: 1.0-20.0)
-            poisson_lambda: Poisson noise scaling factor (range: 0.1-5.0)
-            enable_gaussian: Whether to add Gaussian noise
-            enable_poisson: Whether to add Poisson noise
+            config: Configuration dictionary containing noise parameters
         """
-        self.gaussian_mean = np.clip(gaussian_mean, -10.0, 10.0)
-        self.gaussian_std = np.clip(gaussian_std, 1.0, 20.0)
-        self.poisson_lambda = np.clip(poisson_lambda, 0.1, 5.0)
-        self.enable_gaussian = enable_gaussian
-        self.enable_poisson = enable_poisson
+        # Load values from config - these MUST match default_config.yaml
+        self.gaussian_mean = config.get('gaussian_mean', 0.0)
+        self.gaussian_std = config.get('gaussian_std', 0.01)
+        self.poisson_lambda = config.get('poisson_lambda', 1.0)
+        self.enable_gaussian = config.get('enable_gaussian', True)
+        self.enable_poisson = config.get('enable_poisson', False)
+        
+        # Validate and clip to safe ranges
+        self.gaussian_mean = np.clip(self.gaussian_mean, -10.0, 10.0)
+        self.gaussian_std = np.clip(self.gaussian_std, 0.0, 20.0)
+        self.poisson_lambda = np.clip(self.poisson_lambda, 0.1, 5.0)
     
     def apply(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
         """
@@ -245,13 +245,25 @@ class NoiseOperator:
         
         # Add Poisson noise (signal-dependent)
         if self.enable_poisson:
+            # NOTE: Poisson noise works best with non-normalized images (e.g., [0, 255])
+            # For normalized [0, 1] images, consider disabling Poisson noise
+            
             # Ensure positive values for Poisson noise
             positive_image = np.maximum(noisy_image, 0.0)
-            # Scale by lambda and apply Poisson noise
-            scaled_image = positive_image * self.poisson_lambda
-            poisson_noise = np.random.poisson(scaled_image).astype(np.float32)
-            # Convert back to original scale
-            poisson_noise = poisson_noise / self.poisson_lambda
+            
+            # For normalized images, scale up before Poisson, then scale back
+            if positive_image.max() <= 1.0:
+                # Assume normalized image, scale to reasonable photon count
+                scale_factor = 100.0  # Simulate ~100 photons per normalized unit
+                scaled_image = positive_image * scale_factor
+                poisson_noise = np.random.poisson(scaled_image).astype(np.float32)
+                poisson_noise = poisson_noise / scale_factor
+            else:
+                # Non-normalized image, use lambda scaling
+                scaled_image = positive_image * self.poisson_lambda
+                poisson_noise = np.random.poisson(scaled_image).astype(np.float32)
+                poisson_noise = poisson_noise / self.poisson_lambda
+            
             # Add the noise component
             noise_component = poisson_noise - positive_image
             noisy_image += noise_component
@@ -261,6 +273,10 @@ class NoiseOperator:
             noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
         elif image.dtype == np.uint16:
             noisy_image = np.clip(noisy_image, 0, 65535).astype(np.uint16)
+        elif image.dtype in [np.float32, np.float64]:
+            # For float images, assume normalized [0, 1] range and clip
+            # (since we normalize in the loader)
+            noisy_image = np.clip(noisy_image, 0.0, 1.0).astype(image.dtype)
         else:
             noisy_image = noisy_image.astype(image.dtype)
         

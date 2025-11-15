@@ -36,11 +36,8 @@ class DegradationPipeline:
             shift_y=0.0
         )
         
-        self.blur_lr1 = BlurOperator(
-            optical_sigma=config.get('optical_sigma', 1.0),
-            optical_kernel_size=config.get('optical_kernel_size', 5),
-            motion_kernel_size=config.get('motion_kernel_size', 3)
-        )
+        # Pass full config to BlurOperator - it will read its own parameters
+        self.blur_lr1 = BlurOperator(config)
         
         # Initialize operators for LR2 (P2 sensor - shifted frame)
         # 0.5 LR pixel shift = 2.0 HR pixel shift for 4x factor
@@ -52,33 +49,15 @@ class DegradationPipeline:
             shift_y=hr_shift
         )
         
-        self.blur_lr2 = BlurOperator(
-            optical_sigma=config.get('optical_sigma', 1.0),
-            optical_kernel_size=config.get('optical_kernel_size', 5),
-            motion_kernel_size=config.get('motion_kernel_size', 3)
-        )
+        # Pass full config to BlurOperator - it will read its own parameters
+        self.blur_lr2 = BlurOperator(config)
         
-        # Shared downsampling operator
-        self.downsample = DownsamplingOperator(
-            downsampling_factor=self.downsampling_factor
-        )
+        # Pass full config to DownsamplingOperator
+        self.downsample = DownsamplingOperator(config)
         
-        # Noise operators (independent for each frame)
-        self.noise_lr1 = NoiseOperator(
-            gaussian_mean=config.get('gaussian_mean', 0.0),
-            gaussian_std=config.get('gaussian_std', 5.0),
-            poisson_lambda=config.get('poisson_lambda', 1.0),
-            enable_gaussian=config.get('enable_gaussian', True),
-            enable_poisson=config.get('enable_poisson', True)
-        )
-        
-        self.noise_lr2 = NoiseOperator(
-            gaussian_mean=config.get('gaussian_mean', 0.0),
-            gaussian_std=config.get('gaussian_std', 5.0),
-            poisson_lambda=config.get('poisson_lambda', 1.0),
-            enable_gaussian=config.get('enable_gaussian', True),
-            enable_poisson=config.get('enable_poisson', True)
-        )
+        # Pass full config to NoiseOperators - they will read their own parameters
+        self.noise_lr1 = NoiseOperator(config)
+        self.noise_lr2 = NoiseOperator(config)
         
         # Setup logging
         self.logger = logging.getLogger(__name__)

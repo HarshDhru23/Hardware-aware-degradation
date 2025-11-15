@@ -91,19 +91,25 @@ class GeoTIFFLoader:
         with rasterio.open(filepath) as src:
             # Read the first band (PAN images are single-band)
             image = src.read(1)
+            original_dtype = src.dtypes[0]
+            
+            self.logger.debug(f"Original image dtype: {original_dtype}, range: [{image.min()}, {image.max()}]")
             
             # Handle different bit depths
             if src.dtypes[0] in ['uint16', 'int16']:
                 # 16-bit images
                 if self.normalize:
                     image = image.astype(np.float32) / 65535.0
+                    self.logger.debug(f"Normalized 16-bit image to [0, 1] range")
             elif src.dtypes[0] in ['uint8']:
                 # 8-bit images
                 if self.normalize:
                     image = image.astype(np.float32) / 255.0
+                    self.logger.debug(f"Normalized 8-bit image to [0, 1] range")
             else:
                 # Float images
                 image = image.astype(np.float32)
+                self.logger.debug(f"Float image, keeping as-is")
                 
         return image
     
@@ -112,16 +118,22 @@ class GeoTIFFLoader:
         with Image.open(filepath) as img:
             # Convert to numpy array
             image = np.array(img)
+            original_dtype = image.dtype
+            
+            self.logger.debug(f"Original image dtype: {original_dtype}, range: [{image.min()}, {image.max()}]")
             
             # Handle different bit depths
             if image.dtype == np.uint16:
                 if self.normalize:
                     image = image.astype(np.float32) / 65535.0
+                    self.logger.debug(f"Normalized 16-bit image to [0, 1] range")
             elif image.dtype == np.uint8:
                 if self.normalize:
                     image = image.astype(np.float32) / 255.0
+                    self.logger.debug(f"Normalized 8-bit image to [0, 1] range")
             else:
                 image = image.astype(np.float32)
+                self.logger.debug(f"Float image, keeping as-is")
                 
         return image
     

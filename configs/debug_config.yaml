@@ -1,0 +1,38 @@
+# Debug configuration - NO degradation for testing
+# ISRO Multi-Frame Super-Resolution (MFSR) Project
+
+# Core pipeline parameters
+downsampling_factor: 4
+
+# NO blur - minimal values
+optical_sigma: 0.5
+optical_kernel_size: 3
+
+# NO motion blur
+motion_kernel_size: 1
+
+# NO noise at all
+enable_gaussian: false  # DISABLED
+enable_poisson: false   # DISABLED
+gaussian_mean: 0.0
+gaussian_std: 0.001     # Minimal value (validation requires >= 0.001)
+poisson_lambda: 1.0
+
+# Data loading parameters
+normalize: true
+target_dtype: "float32"
+
+# Patch extraction parameters
+hr_patch_size: 256
+lr_patch_size: 64
+patch_stride: 256
+min_valid_pixels: 0.95
+
+# File I/O parameters
+input_format: "geotiff"
+output_format: "npy"
+save_visualization: true
+
+# Logging
+log_level: "DEBUG"
+verbose: true

@@ -5,17 +5,19 @@
 downsampling_factor: 4  # 4x super-resolution factor (range: 2-8)
 
 # Optical blur parameters
-optical_sigma: 1.0  # Gaussian blur standard deviation (range: 0.5-3.0)
+optical_sigma: 0.8  # Gaussian blur standard deviation (range: 0.5-3.0)
 optical_kernel_size: 5  # Gaussian kernel size, must be odd (range: 3-15)
 
 # Motion blur parameters (TDI velocity mismatch simulation)
-motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1-9)
+motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1-9, 1=disabled)
 
 # Noise parameters
 enable_gaussian: true  # Enable Gaussian noise
-enable_poisson: true   # Enable Poisson noise
+enable_poisson: false  # Enable Poisson noise (recommended: false for normalized images)
 gaussian_mean: 0.0     # Gaussian noise mean (range: -10.0 to 10.0)
-gaussian_std: 5.0      # Gaussian noise standard deviation (range: 1.0-20.0)
+gaussian_std: 0.05     # Gaussian noise standard deviation (range: 0.001-20.0)
+                       # For normalized [0,1] images: use 0.01-0.03 (1-3% noise)
+                       # For [0,255] images: use 3.0-10.0
 poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0)
 
 # Data loading parameters
@@ -24,7 +26,7 @@ target_dtype: "float32"  # Target data type: float32, float64, uint8, uint16
 
 # Patch extraction parameters
 hr_patch_size: 256     # HR patch size (range: 64-1024)
-lr_patch_size: 64      # LR patch size (range: 16-256)
+lr_patch_size: 64      # LR patch size (range:python test.py --create-sample 16-256)
 patch_stride: 256      # Stride for patch extraction (default: hr_patch_size)
 min_valid_pixels: 0.95 # Minimum fraction of valid pixels in patch (range: 0.5-1.0)
 

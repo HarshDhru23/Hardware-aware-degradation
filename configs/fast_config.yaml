@@ -13,9 +13,9 @@ motion_kernel_size: 1   # No motion blur
 
 # Light noise
 enable_gaussian: true
-enable_poisson: false   # Disable Poisson for speed
+enable_poisson: false   # Disable Poisson for speed and normalized images
 gaussian_mean: 0.0
-gaussian_std: 3.0       # Light noise
+gaussian_std: 0.005     # Very light noise (0.5%)
 poisson_lambda: 1.0
 
 # Data parameters

@@ -9,8 +9,13 @@ import yaml
 from typing import Dict, Any, Union, Optional
 from pathlib import Path
 import logging
+import sys
 
-from ..utils.validation import validate_config
+# Add src to path for imports
+if __name__ != '__main__':
+    from utils.validation import validate_config
+else:
+    from .utils.validation import validate_config
 
 
 class ConfigManager:
@@ -85,7 +90,7 @@ class ConfigManager:
             'enable_gaussian': True,
             'enable_poisson': True,
             'gaussian_mean': 0.0,
-            'gaussian_std': 5.0,
+            'gaussian_std': 0.02,
             'poisson_lambda': 1.0,
             'normalize': True,
             'target_dtype': 'float32',

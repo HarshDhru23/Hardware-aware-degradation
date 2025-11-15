@@ -167,10 +167,10 @@ python scripts/process_images.py \\
 | Parameter | Range | Default | Description |
 |-----------|--------|---------|-------------|
 | `gaussian_mean` | -10.0 to 10.0 | 0.0 | Gaussian noise mean |
-| `gaussian_std` | 1.0-20.0 | 5.0 | Gaussian noise std deviation |
+| `gaussian_std` | 0.001-20.0 | 0.01 | Gaussian noise std (0.01-0.03 for normalized, 3-10 for [0,255]) |
 | `poisson_lambda` | 0.1-5.0 | 1.0 | Poisson noise scaling factor |
 | `enable_gaussian` | true/false | true | Enable Gaussian noise |
-| `enable_poisson` | true/false | true | Enable Poisson noise |
+| `enable_poisson` | true/false | false | Enable Poisson noise (recommended: false for normalized) |
 
 ### Patch Extraction Parameters  
 | Parameter | Range | Default | Description |
