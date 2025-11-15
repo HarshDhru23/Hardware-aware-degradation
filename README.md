@@ -3,7 +3,6 @@
 ## ISRO Multi-Frame Super-Resolution (MFSR) Project - Contribution 1
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/release/python-380/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A comprehensive degradation pipeline that implements the observation model for generating synthetic training data for satellite super-resolution. This pipeline simulates the hardware characteristics of satellite sensors to create realistic low-resolution image pairs from high-resolution ground truth data.
 
@@ -349,21 +348,4 @@ python scripts/process_images.py \\
     --output_dir data/output \\
     --config configs/default_config.yaml \\
     --log_file debug.log
-```
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Citation
-
-If you use this pipeline in your research, please cite:
-
-```bibtex
-@software{hardware_aware_degradation,
-  title={Hardware-aware Degradation Pipeline for Satellite Super-Resolution},
-  author={ISRO MFSR Team},
-  year={2025},
-  url={https://github.com/HarshDhru23/Hardware-aware-degradation}
-}
 ```
