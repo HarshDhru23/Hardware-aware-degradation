@@ -15,9 +15,8 @@ motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1
 enable_gaussian: true  # Enable Gaussian noise
 enable_poisson: false  # Enable Poisson noise (recommended: false for normalized images)
 gaussian_mean: 0.0     # Gaussian noise mean (range: -10.0 to 10.0)
-gaussian_std: 0.05     # Gaussian noise standard deviation (range: 0.001-20.0)
-                       # For normalized [0,1] images: use 0.01-0.03 (1-3% noise)
-                       # For [0,255] images: use 3.0-10.0
+gaussian_std: 0.1     # Gaussian noise standard deviation (range: 0.001-20.0)
+                       # For normalized [0,1] images: use 0.01-0.1 (1-10% noise)
 poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0)
 
 # Data loading parameters

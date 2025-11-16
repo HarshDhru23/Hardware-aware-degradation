@@ -167,7 +167,7 @@ python scripts/process_images.py \\
 | Parameter | Range | Default | Description |
 |-----------|--------|---------|-------------|
 | `gaussian_mean` | -10.0 to 10.0 | 0.0 | Gaussian noise mean |
-| `gaussian_std` | 0.001-20.0 | 0.01 | Gaussian noise std (0.01-0.03 for normalized, 3-10 for [0,255]) |
+| `gaussian_std` | 0.001-20.0 | 0.1 | Gaussian noise std (0.01-0.1 for normalized)|
 | `poisson_lambda` | 0.1-5.0 | 1.0 | Poisson noise scaling factor |
 | `enable_gaussian` | true/false | true | Enable Gaussian noise |
 | `enable_poisson` | true/false | false | Enable Poisson noise (recommended: false for normalized) |
