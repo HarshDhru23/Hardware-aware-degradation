@@ -48,17 +48,17 @@ def visualize_degradation_results(hr_image: np.ndarray,
     fig, axes = plt.subplots(1, 3, figsize=figsize)
     
     # Display HR image
-    axes[0].imshow(hr_image, cmap='gray', vmin=0, vmax=1 if hr_image.max() <= 1 else 255)
+    axes[0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
     axes[0].set_title(f'HR Image\n{hr_image.shape}')
     axes[0].axis('off')
     
     # Display LR1 image
-    axes[1].imshow(lr1_image, cmap='gray', vmin=0, vmax=1 if lr1_image.max() <= 1 else 255)
+    axes[1].imshow(lr1_image, cmap='gray', vmin=np.percentile(lr1_image, 2), vmax=np.percentile(lr1_image, 98))
     axes[1].set_title(f'LR1 (P1 Sensor)\n{lr1_image.shape}')
     axes[1].axis('off')
     
     # Display LR2 image
-    axes[2].imshow(lr2_image, cmap='gray', vmin=0, vmax=1 if lr2_image.max() <= 1 else 255)
+    axes[2].imshow(lr2_image, cmap='gray', vmin=np.percentile(lr2_image, 2), vmax=np.percentile(lr2_image, 98))
     axes[2].set_title(f'LR2 (P2 Sensor)\n{lr2_image.shape}')
     axes[2].axis('off')
     
@@ -66,7 +66,7 @@ def visualize_degradation_results(hr_image: np.ndarray,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logging.info(f"Visualization saved to {save_path}")
     
     plt.show()
@@ -96,12 +96,12 @@ def plot_degradation_comparison(original: np.ndarray,
         axes = axes.reshape(2, 1)
     
     # Plot full images in top row
-    axes[0, 0].imshow(original, cmap='gray')
+    axes[0, 0].imshow(original, cmap='gray', vmin=np.percentile(original, 2), vmax=np.percentile(original, 98))
     axes[0, 0].set_title('Original HR')
     axes[0, 0].axis('off')
     
     for i, (name, img) in enumerate(degraded_images.items(), 1):
-        axes[0, i].imshow(img, cmap='gray')
+        axes[0, i].imshow(img, cmap='gray', vmin=np.percentile(img, 2), vmax=np.percentile(img, 98))
         axes[0, i].set_title(name)
         axes[0, i].axis('off')
     
@@ -115,7 +115,8 @@ def plot_degradation_comparison(original: np.ndarray,
         axes[0, 0].add_patch(rect)
         
         # Show zoomed region
-        axes[1, 0].imshow(original[y1:y2, x1:x2], cmap='gray')
+        zoom_orig = original[y1:y2, x1:x2]
+        axes[1, 0].imshow(zoom_orig, cmap='gray', vmin=np.percentile(zoom_orig, 2), vmax=np.percentile(zoom_orig, 98))
         axes[1, 0].set_title('Original (Zoomed)')
         axes[1, 0].axis('off')
         
@@ -125,7 +126,8 @@ def plot_degradation_comparison(original: np.ndarray,
             lr_y1, lr_x1 = y1 // factor, x1 // factor
             lr_y2, lr_x2 = y2 // factor, x2 // factor
             
-            axes[1, i].imshow(img[lr_y1:lr_y2, lr_x1:lr_x2], cmap='gray')
+            zoom_img = img[lr_y1:lr_y2, lr_x1:lr_x2]
+            axes[1, i].imshow(zoom_img, cmap='gray', vmin=np.percentile(zoom_img, 2), vmax=np.percentile(zoom_img, 98))
             axes[1, i].set_title(f'{name} (Zoomed)')
             axes[1, i].axis('off')
     else:
@@ -136,7 +138,7 @@ def plot_degradation_comparison(original: np.ndarray,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logging.info(f"Comparison plot saved to {save_path}")
     
     plt.show()
@@ -167,12 +169,12 @@ def plot_noise_analysis(clean_image: np.ndarray,
     
     # Original images
     ax1 = fig.add_subplot(gs[0, 0])
-    ax1.imshow(clean_image, cmap='gray')
+    ax1.imshow(clean_image, cmap='gray', vmin=np.percentile(clean_image, 2), vmax=np.percentile(clean_image, 98))
     ax1.set_title('Clean Image')
     ax1.axis('off')
     
     ax2 = fig.add_subplot(gs[0, 1])
-    ax2.imshow(noisy_image, cmap='gray')
+    ax2.imshow(noisy_image, cmap='gray', vmin=np.percentile(noisy_image, 2), vmax=np.percentile(noisy_image, 98))
     ax2.set_title('Noisy Image')
     ax2.axis('off')
     
@@ -246,7 +248,7 @@ def plot_noise_analysis(clean_image: np.ndarray,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logging.info(f"Noise analysis saved to {save_path}")
     
     plt.show()
@@ -272,11 +274,11 @@ def plot_blur_analysis(original: np.ndarray,
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
     
     # Images
-    axes[0, 0].imshow(original, cmap='gray')
+    axes[0, 0].imshow(original, cmap='gray', vmin=np.percentile(original, 2), vmax=np.percentile(original, 98))
     axes[0, 0].set_title('Original')
     axes[0, 0].axis('off')
     
-    axes[0, 1].imshow(blurred, cmap='gray')
+    axes[0, 1].imshow(blurred, cmap='gray', vmin=np.percentile(blurred, 2), vmax=np.percentile(blurred, 98))
     axes[0, 1].set_title('Blurred')
     axes[0, 1].axis('off')
     
@@ -316,7 +318,7 @@ def plot_blur_analysis(original: np.ndarray,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
         logging.info(f"Blur analysis saved to {save_path}")
     
     plt.show()

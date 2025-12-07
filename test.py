@@ -166,15 +166,15 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         # Main visualization
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         
-        axes[0].imshow(hr_image, cmap='gray', vmin=0, vmax=1)
+        axes[0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
         axes[0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
         axes[0].axis('off')
         
-        axes[1].imshow(lr1, cmap='gray', vmin=0, vmax=1)
+        axes[1].imshow(lr1, cmap='gray', vmin=np.percentile(lr1, 2), vmax=np.percentile(lr1, 98))
         axes[1].set_title(f'LR1 (P1 Sensor - Reference)\nShape: {lr1.shape}', fontsize=12, fontweight='bold')
         axes[1].axis('off')
         
-        axes[2].imshow(lr2, cmap='gray', vmin=0, vmax=1)
+        axes[2].imshow(lr2, cmap='gray', vmin=np.percentile(lr2, 2), vmax=np.percentile(lr2, 98))
         axes[2].set_title(f'LR2 (P2 Sensor - Shifted)\nShape: {lr2.shape}', fontsize=12, fontweight='bold')
         axes[2].axis('off')
         
@@ -182,7 +182,7 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         plt.tight_layout()
         
         output_path = output_dir / "degradation_results.png"
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"   Saved visualization: {output_path}")
         plt.show()
         
@@ -190,12 +190,12 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         fig, axes = plt.subplots(2, 2, figsize=(12, 12))
         
         # LR1
-        axes[0, 0].imshow(lr1, cmap='gray', vmin=0, vmax=1)
+        axes[0, 0].imshow(lr1, cmap='gray', vmin=np.percentile(lr1, 2), vmax=np.percentile(lr1, 98))
         axes[0, 0].set_title('LR1 (P1 Sensor)', fontweight='bold')
         axes[0, 0].axis('off')
         
         # LR2
-        axes[0, 1].imshow(lr2, cmap='gray', vmin=0, vmax=1)
+        axes[0, 1].imshow(lr2, cmap='gray', vmin=np.percentile(lr2, 2), vmax=np.percentile(lr2, 98))
         axes[0, 1].set_title('LR2 (P2 Sensor)', fontweight='bold')
         axes[0, 1].axis('off')
         
@@ -217,7 +217,7 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         plt.tight_layout()
         
         comparison_path = output_dir / "lr1_lr2_comparison.png"
-        plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+        plt.savefig(comparison_path, dpi=150, bbox_inches='tight')
         print(f"   Saved comparison: {comparison_path}")
         plt.show()
         

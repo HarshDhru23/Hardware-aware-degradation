@@ -4,20 +4,31 @@
 # Core pipeline parameters
 downsampling_factor: 4  # 4x super-resolution factor (range: 2-8)
 
+# Shift parameters (sub-pixel registration error simulation)
+shift_mean: 0.5        # Mean shift in LR pixels (typically 0.5 for half-pixel offset)
+shift_std: 0.05         # Standard deviation for Gaussian shift distribution
+                       # Set to 0.0 for deterministic shift
+
 # Optical blur parameters
 optical_sigma: 0.8  # Gaussian blur standard deviation (range: 0.5-3.0)
+                    # Simulates satellite sensor PSF (Point Spread Function)
 optical_kernel_size: 5  # Gaussian kernel size, must be odd (range: 3-15)
+                        
 
 # Motion blur parameters (TDI velocity mismatch simulation)
 motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1-9, 1=disabled)
+                       
 
 # Noise parameters
-enable_gaussian: true  # Enable Gaussian noise
-enable_poisson: false  # Enable Poisson noise (recommended: false for normalized images)
+enable_gaussian: false  # Enable Gaussian noise (read noise from electronics)
+enable_poisson: true   # Enable Poisson noise (photon shot noise - RECOMMENDED)
 gaussian_mean: 0.0     # Gaussian noise mean (range: -10.0 to 10.0)
-gaussian_std: 0.1     # Gaussian noise standard deviation (range: 0.001-20.0)
-                       # For normalized [0,1] images: use 0.01-0.1 (1-10% noise)
-poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0)
+gaussian_std: 0.001    # Gaussian noise std dev - read noise (range: 0.001-20.0)
+poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0) [DEPRECATED - use photon_gain]
+photon_gain: 10000.0    # Photon gain factor (range: 10-10000)
+                       # Increased from 1000 to 5000 for MUCH less Poisson noise
+                       # Higher = more photons = better SNR
+                       # 5000 simulates high-quality satellite sensor in good lighting
 
 # Data loading parameters
 normalize: true        # Normalize pixel values to [0, 1]

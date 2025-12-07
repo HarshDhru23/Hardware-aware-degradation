@@ -40,13 +40,16 @@ class DegradationPipeline:
         self.blur_lr1 = BlurOperator(config)
         
         # Initialize operators for LR2 (P2 sensor - shifted frame)
-        # 0.5 LR pixel shift = 2.0 HR pixel shift for 4x factor
-        lr_shift = 0.5
-        hr_shift = lr_shift * self.downsampling_factor
+        # Use stochastic shift with Gaussian distribution
+        shift_mean = config.get('shift_mean', 0.5)  # Mean shift in LR pixels
+        shift_std = config.get('shift_std', 0.1)    # Std dev for shift jitter
         
         self.warp_lr2 = WarpingOperator(
-            shift_x=hr_shift,
-            shift_y=hr_shift
+            shift_x=0.0,  # Not used in stochastic mode
+            shift_y=0.0,
+            stochastic=True,
+            shift_mean=shift_mean,
+            shift_std=shift_std
         )
         
         # Pass full config to BlurOperator - it will read its own parameters
@@ -78,7 +81,7 @@ class DegradationPipeline:
         self.logger.debug("Generating LR1 (reference frame)")
         
         # Step 1: Warping (M_1) - Identity operation
-        warped = self.warp_lr1.apply(hr_image)
+        warped = self.warp_lr1.apply(hr_image, seed=seed, downsampling_factor=self.downsampling_factor)
         
         # Step 2: Blurring (B_1) - Optical + Motion blur
         blurred = self.blur_lr1.apply(warped)
@@ -104,10 +107,10 @@ class DegradationPipeline:
         Returns:
             LR2 image (H/factor, W/factor) or (H/factor, W/factor, C)
         """
-        self.logger.debug("Generating LR2 (shifted frame)")
+        self.logger.debug("Generating LR2 (shifted frame with stochastic shift)")
         
-        # Step 1: Warping (M_2) - (0.5, 0.5) LR pixel shift
-        warped = self.warp_lr2.apply(hr_image)
+        # Step 1: Warping (M_2) - Stochastic sub-pixel shift from Gaussian distribution
+        warped = self.warp_lr2.apply(hr_image, seed=seed, downsampling_factor=self.downsampling_factor)
         
         # Step 2: Blurring (B_2) - Optical + Motion blur
         blurred = self.blur_lr2.apply(warped)

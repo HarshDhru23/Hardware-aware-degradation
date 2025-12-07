@@ -18,37 +18,66 @@ class WarpingOperator:
     Warping operator M_k that applies geometric transformations.
     
     For P1 sensor: Identity (no shift)
-    For P2 sensor: (0.5, 0.5) LR pixel shift = (2, 2) HR pixel shift for 4x factor
+    For P2 sensor: Stochastic shift drawn from Gaussian distribution
+                   - Mean: 0.5 LR pixels (half-pixel offset)
+                   - Std: 0.1 LR pixels (sensor jitter/misalignment)
     """
     
-    def __init__(self, shift_x: float = 0.0, shift_y: float = 0.0):
+    def __init__(self, shift_x: float = 0.0, shift_y: float = 0.0, 
+                 stochastic: bool = False, shift_mean: float = 0.5, shift_std: float = 0.1):
         """
         Initialize warping operator.
         
         Args:
-            shift_x: Horizontal shift in HR pixels (range: 0-4 for 4x factor)
-            shift_y: Vertical shift in HR pixels (range: 0-4 for 4x factor)
+            shift_x: Horizontal shift in HR pixels (deterministic mode)
+            shift_y: Vertical shift in HR pixels (deterministic mode)
+            stochastic: If True, sample shifts from Gaussian distribution
+            shift_mean: Mean shift value for stochastic mode (in LR pixels)
+            shift_std: Std deviation for stochastic mode (in LR pixels)
         """
         self.shift_x = np.clip(shift_x, 0.0, 4.0)
         self.shift_y = np.clip(shift_y, 0.0, 4.0)
+        self.stochastic = stochastic
+        self.shift_mean = shift_mean
+        self.shift_std = shift_std
         
-    def apply(self, image: np.ndarray) -> np.ndarray:
+    def apply(self, image: np.ndarray, seed: Optional[int] = None, downsampling_factor: int = 4) -> np.ndarray:
         """
         Apply warping transformation to image.
         
         Args:
             image: Input HR image (H, W) or (H, W, C)
+            seed: Random seed for stochastic shift (only used if stochastic=True)
+            downsampling_factor: Downsampling factor to convert LR shift to HR shift
         
         Returns:
             Warped image with same shape as input
         """
-        if self.shift_x == 0.0 and self.shift_y == 0.0:
+        # Determine actual shift values
+        if self.stochastic:
+            # Sample from Gaussian distribution
+            if seed is not None:
+                np.random.seed(seed)
+            # Sample shift in LR pixels, then convert to HR pixels
+            shift_x_lr = np.random.normal(self.shift_mean, self.shift_std)
+            shift_y_lr = np.random.normal(self.shift_mean, self.shift_std)
+            shift_x_hr = shift_x_lr * downsampling_factor
+            shift_y_hr = shift_y_lr * downsampling_factor
+            # Clip to reasonable range
+            shift_x_hr = np.clip(shift_x_hr, -4.0, 4.0)
+            shift_y_hr = np.clip(shift_y_hr, -4.0, 4.0)
+        else:
+            # Use deterministic shifts
+            shift_x_hr = self.shift_x
+            shift_y_hr = self.shift_y
+        
+        if shift_x_hr == 0.0 and shift_y_hr == 0.0:
             return image.copy()
         
-        # Create transformation matrix
+        # Create transformation matrix with computed shifts
         transformation_matrix = np.array([
-            [1, 0, self.shift_x],
-            [0, 1, self.shift_y]
+            [1, 0, shift_x_hr],
+            [0, 1, shift_y_hr]
         ], dtype=np.float32)
         
         # Apply affine transformation
@@ -89,10 +118,14 @@ class BlurOperator:
         Args:
             config: Configuration dictionary containing blur parameters
         """
-        # Load values from config - these MUST match default_config.yaml
-        self.optical_sigma = config.get('optical_sigma', 0.8)
-        self.optical_kernel_size = config.get('optical_kernel_size', 5)
-        self.motion_kernel_size = config.get('motion_kernel_size', 3)
+        # Load values from config - these MUST come from config file
+        # No fallback defaults to ensure config changes are always reflected
+        self.optical_sigma = config.get('optical_sigma')
+        self.optical_kernel_size = config.get('optical_kernel_size')
+        self.motion_kernel_size = config.get('motion_kernel_size')
+        
+        if self.optical_sigma is None or self.optical_kernel_size is None or self.motion_kernel_size is None:
+            raise ValueError("BlurOperator requires 'optical_sigma', 'optical_kernel_size', and 'motion_kernel_size' in config")
         
         # Validate and clip to safe ranges
         self.optical_sigma = np.clip(self.optical_sigma, 0.5, 3.0)
@@ -148,8 +181,10 @@ class DownsamplingOperator:
         Args:
             config: Configuration dictionary containing downsampling parameters
         """
-        # Load value from config - MUST match default_config.yaml
-        downsampling_factor = config.get('downsampling_factor', 4)
+        # Load value from config - MUST come from config file
+        downsampling_factor = config.get('downsampling_factor')
+        if downsampling_factor is None:
+            raise ValueError("DownsamplingOperator requires 'downsampling_factor' in config")
         self.factor = max(2, min(8, downsampling_factor))
     
     def apply(self, image: np.ndarray) -> np.ndarray:
@@ -193,10 +228,13 @@ class DownsamplingOperator:
 
 class NoiseOperator:
     """
-    Noise operator n_k that adds Gaussian and Poisson noise.
+    Noise operator n_k that adds realistic Poisson-Gaussian noise.
     
-    Gaussian noise: Additive with configurable mean and variance
-    Poisson noise: Signal-dependent noise
+    Models the complete noise in digital imaging sensors:
+    - Poisson noise: Signal-dependent photon shot noise (sqrt(N) statistics)
+    - Gaussian noise: Signal-independent read noise from electronics
+    
+    Combined model: y = Poisson(x * gain) / gain + Gaussian(0, sigma_read)
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -206,78 +244,82 @@ class NoiseOperator:
         Args:
             config: Configuration dictionary containing noise parameters
         """
-        # Load values from config - these MUST match default_config.yaml
-        self.gaussian_mean = config.get('gaussian_mean', 0.0)
-        self.gaussian_std = config.get('gaussian_std', 0.01)
-        self.poisson_lambda = config.get('poisson_lambda', 1.0)
-        self.enable_gaussian = config.get('enable_gaussian', True)
-        self.enable_poisson = config.get('enable_poisson', False)
+        # Load values from config - these MUST come from config file
+        # No fallback defaults to ensure config changes are always reflected
+        self.gaussian_mean = config.get('gaussian_mean')
+        self.gaussian_std = config.get('gaussian_std')
+        self.poisson_lambda = config.get('poisson_lambda')
+        self.enable_gaussian = config.get('enable_gaussian')
+        self.enable_poisson = config.get('enable_poisson')
+        
+        # Photon gain factor for Poisson noise (higher = more photons = less relative noise)
+        # For satellite sensors: 100-1000 is typical for well-lit scenes
+        self.photon_gain = config.get('photon_gain')
+        
+        # Validate all required parameters are present
+        if any(x is None for x in [self.gaussian_std, self.enable_gaussian, self.enable_poisson, self.photon_gain]):
+            raise ValueError("NoiseOperator requires 'gaussian_std', 'enable_gaussian', 'enable_poisson', and 'photon_gain' in config")
         
         # Validate and clip to safe ranges
         self.gaussian_mean = np.clip(self.gaussian_mean, -10.0, 10.0)
         self.gaussian_std = np.clip(self.gaussian_std, 0.0, 20.0)
         self.poisson_lambda = np.clip(self.poisson_lambda, 0.1, 5.0)
+        self.photon_gain = np.clip(self.photon_gain, 10.0, 10000.0)
     
     def apply(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
         """
-        Add noise to image.
+        Add realistic Poisson-Gaussian noise to image.
+        
+        Implements the physical noise model for digital sensors:
+        1. Photon shot noise (Poisson): sqrt(N) noise where N = photon count
+        2. Read noise (Gaussian): Electronic noise independent of signal
+        
+        For normalized [0,1] images:
+        - Scales to photon counts: x → x * photon_gain
+        - Adds Poisson noise: Poisson(x * gain)
+        - Scales back: / photon_gain
+        - Adds Gaussian read noise
         
         Args:
-            image: Input LR image (H, W) or (H, W, C)
+            image: Input LR image (H, W) or (H, W, C), normalized to [0, 1]
             seed: Random seed for reproducible noise
         
         Returns:
-            Noisy image with same shape and dtype as input
+            Noisy image with same shape and dtype, clipped to [0, 1]
         """
         if seed is not None:
             np.random.seed(seed)
         
-        noisy_image = image.copy().astype(np.float32)
+        noisy_image = image.copy().astype(np.float64)  # Use float64 for precision
         
-        # Add Gaussian noise
-        if self.enable_gaussian:
-            gaussian_noise = np.random.normal(
-                self.gaussian_mean, 
-                self.gaussian_std, 
-                image.shape
-            ).astype(np.float32)
-            noisy_image += gaussian_noise
-        
-        # Add Poisson noise (signal-dependent)
+        # Step 1: Add Poisson noise (signal-dependent photon shot noise)
         if self.enable_poisson:
-            # NOTE: Poisson noise works best with non-normalized images (e.g., [0, 255])
-            # For normalized [0, 1] images, consider disabling Poisson noise
+            # Scale normalized image to photon counts
+            # For [0,1] image: 0.5 intensity → photon_gain/2 photons
+            photon_counts = noisy_image * self.photon_gain
             
-            # Ensure positive values for Poisson noise
-            positive_image = np.maximum(noisy_image, 0.0)
+            # Ensure non-negative (Poisson requires λ >= 0)
+            photon_counts = np.maximum(photon_counts, 0.0)
             
-            # For normalized images, scale up before Poisson, then scale back
-            if positive_image.max() <= 1.0:
-                # Assume normalized image, scale to reasonable photon count
-                scale_factor = 100.0  # Simulate ~100 photons per normalized unit
-                scaled_image = positive_image * scale_factor
-                poisson_noise = np.random.poisson(scaled_image).astype(np.float32)
-                poisson_noise = poisson_noise / scale_factor
-            else:
-                # Non-normalized image, use lambda scaling
-                scaled_image = positive_image * self.poisson_lambda
-                poisson_noise = np.random.poisson(scaled_image).astype(np.float32)
-                poisson_noise = poisson_noise / self.poisson_lambda
+            # Generate Poisson-distributed photon counts
+            # Variance = Mean for Poisson distribution
+            noisy_photons = np.random.poisson(photon_counts).astype(np.float64)
             
-            # Add the noise component
-            noise_component = poisson_noise - positive_image
-            noisy_image += noise_component
+            # Scale back to [0,1] range
+            noisy_image = noisy_photons / self.photon_gain
         
-        # Clip to valid range and convert back to original dtype
-        if image.dtype == np.uint8:
-            noisy_image = np.clip(noisy_image, 0, 255).astype(np.uint8)
-        elif image.dtype == np.uint16:
-            noisy_image = np.clip(noisy_image, 0, 65535).astype(np.uint16)
-        elif image.dtype in [np.float32, np.float64]:
-            # For float images, assume normalized [0, 1] range and clip
-            # (since we normalize in the loader)
-            noisy_image = np.clip(noisy_image, 0.0, 1.0).astype(image.dtype)
-        else:
-            noisy_image = noisy_image.astype(image.dtype)
+        # Step 2: Add Gaussian noise (signal-independent read noise)
+        if self.enable_gaussian:
+            # Electronic read noise from sensor circuits
+            read_noise = np.random.normal(
+                self.gaussian_mean,
+                self.gaussian_std,
+                image.shape
+            ).astype(np.float64)
+            noisy_image += read_noise
         
-        return noisy_image
+        # Clip to valid range [0, 1] for normalized images
+        noisy_image = np.clip(noisy_image, 0.0, 1.0)
+        
+        # Convert back to original dtype
+        return noisy_image.astype(image.dtype)
