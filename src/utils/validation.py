@@ -98,7 +98,7 @@ def validate_config(config: Dict[str, Any]) -> bool:
         'optical_kernel_size': (3, 15),
         'motion_kernel_size': (1, 9),
         'gaussian_mean': (-10.0, 10.0),
-        'gaussian_std': (0.001, 20.0),  # 0.01-0.03 for normalized [0,1], 3-10 for [0,255]
+        'gaussian_std': (0.0001, 0.1),  # For normalized [0,1] images: 0.0001-0.001 (very low), 0.001-0.01 (typical)
         'poisson_lambda': (0.1, 5.0),
         'hr_patch_size': (64, 1024),
         'lr_patch_size': (16, 256),

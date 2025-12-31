@@ -256,13 +256,17 @@ class NoiseOperator:
         # For satellite sensors: 100-1000 is typical for well-lit scenes
         self.photon_gain = config.get('photon_gain')
         
+        # Quantization parameters (ADC simulation)
+        self.enable_quantization = config.get('enable_quantization', True)
+        self.quantization_bits = config.get('quantization_bits', 11)  # WorldView-3 default
+        
         # Validate all required parameters are present
         if any(x is None for x in [self.gaussian_std, self.enable_gaussian, self.enable_poisson, self.photon_gain]):
             raise ValueError("NoiseOperator requires 'gaussian_std', 'enable_gaussian', 'enable_poisson', and 'photon_gain' in config")
         
         # Validate and clip to safe ranges
         self.gaussian_mean = np.clip(self.gaussian_mean, -10.0, 10.0)
-        self.gaussian_std = np.clip(self.gaussian_std, 0.0, 20.0)
+        self.gaussian_std = np.clip(self.gaussian_std, 0.0001, 0.1)  # Reduced range for normalized images
         self.poisson_lambda = np.clip(self.poisson_lambda, 0.1, 5.0)
         self.photon_gain = np.clip(self.photon_gain, 10.0, 10000.0)
     
@@ -322,4 +326,78 @@ class NoiseOperator:
         noisy_image = np.clip(noisy_image, 0.0, 1.0)
         
         # Convert back to original dtype
+        return noisy_image.astype(image.dtype)
+    
+    def apply_poisson_only(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """
+        Apply ONLY Poisson noise (photon shot noise) to HR image.
+        This should be called BEFORE downsampling to simulate physical sensor behavior.
+        
+        Args:
+            image: Input HR image (H, W) or (H, W, C), normalized to [0, 1]
+            seed: Random seed for reproducible noise
+        
+        Returns:
+            Image with Poisson noise, clipped to [0, 1]
+        """
+        if not self.enable_poisson:
+            return image.copy()
+        
+        if seed is not None:
+            np.random.seed(seed)
+        
+        noisy_image = image.copy().astype(np.float64)
+        
+        # Scale to photon counts
+        photon_counts = noisy_image * self.photon_gain
+        photon_counts = np.maximum(photon_counts, 0.0)
+        
+        # Apply Poisson noise
+        noisy_photons = np.random.poisson(photon_counts).astype(np.float64)
+        
+        # Scale back to [0,1]
+        noisy_image = noisy_photons / self.photon_gain
+        noisy_image = np.clip(noisy_image, 0.0, 1.0)
+        
+        return noisy_image.astype(image.dtype)
+    
+    def apply_gaussian_only(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """
+        Apply ONLY Gaussian noise (read noise) to LR image, then quantize.
+        This should be called AFTER downsampling to simulate electronic readout + ADC.
+        
+        Args:
+            image: Input LR image (H, W) or (H, W, C), normalized to [0, 1]
+            seed: Random seed for reproducible noise
+        
+        Returns:
+            Image with Gaussian read noise and quantization, clipped to [0, 1]
+        """
+        if not self.enable_gaussian:
+            noisy_image = image.copy()
+        else:
+            if seed is not None:
+                np.random.seed(seed)
+            
+            noisy_image = image.copy().astype(np.float64)
+            
+            # Add read noise
+            read_noise = np.random.normal(
+                self.gaussian_mean,
+                self.gaussian_std,
+                image.shape
+            ).astype(np.float64)
+            noisy_image += read_noise
+            
+            # Clip to valid range before quantization
+            noisy_image = np.clip(noisy_image, 0.0, 1.0)
+        
+        # Apply quantization (ADC simulation) - WorldView-3 is 11-bit
+        if self.enable_quantization:
+            max_value = (2 ** self.quantization_bits) - 1  # e.g., 2047 for 11-bit
+            
+            # Quantize: [0,1] → [0, max_value] → round → [0,1]
+            quantized = np.round(noisy_image * max_value)
+            noisy_image = quantized / max_value
+        
         return noisy_image.astype(image.dtype)

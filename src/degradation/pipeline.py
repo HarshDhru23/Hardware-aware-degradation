@@ -69,7 +69,8 @@ class DegradationPipeline:
         """
         Generate LR1 (reference frame) from HR image.
         
-        Pipeline: x -> M_1 (identity) -> B_1 (blur) -> D (downsample) -> n_1 (noise) -> y_1
+        CORRECT Physical Pipeline: 
+        x -> M_1 (warp) -> B_1 (blur) -> n_poisson (photon shot) -> D (downsample) -> n_gaussian (read noise) -> y_1
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
@@ -86,11 +87,14 @@ class DegradationPipeline:
         # Step 2: Blurring (B_1) - Optical + Motion blur
         blurred = self.blur_lr1.apply(warped)
         
-        # Step 3: Downsampling with sensor PSF (D)
-        downsampled = self.downsample.apply(blurred)
+        # Step 3: Poisson noise (photon shot noise) - BEFORE downsampling (on HR)
+        poisson_noisy = self.noise_lr1.apply_poisson_only(blurred, seed=seed)
         
-        # Step 4: Add noise (n_1)
-        lr1 = self.noise_lr1.apply(downsampled, seed=seed)
+        # Step 4: Downsampling with sensor PSF (D) - Spatial integration smooths noise
+        downsampled = self.downsample.apply(poisson_noisy)
+        
+        # Step 5: Gaussian noise (electronic read noise) - AFTER downsampling (on LR)
+        lr1 = self.noise_lr1.apply_gaussian_only(downsampled, seed=seed)
         
         return lr1
     
@@ -98,7 +102,8 @@ class DegradationPipeline:
         """
         Generate LR2 (shifted frame) from HR image.
         
-        Pipeline: x -> M_2 (shift) -> B_2 (blur) -> D (downsample) -> n_2 (noise) -> y_2
+        CORRECT Physical Pipeline:
+        x -> M_2 (warp+shift) -> B_2 (blur) -> n_poisson (photon shot) -> D (downsample) -> n_gaussian (read noise) -> y_2
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
@@ -115,13 +120,16 @@ class DegradationPipeline:
         # Step 2: Blurring (B_2) - Optical + Motion blur
         blurred = self.blur_lr2.apply(warped)
         
-        # Step 3: Downsampling with sensor PSF (D)
-        downsampled = self.downsample.apply(blurred)
+        # Step 3: Poisson noise (photon shot noise) - BEFORE downsampling (on HR)
+        # Use different seed for independent noise realization
+        poisson_seed = seed + 1 if seed is not None else None
+        poisson_noisy = self.noise_lr2.apply_poisson_only(blurred, seed=poisson_seed)
         
-        # Step 4: Add noise (n_2) - Independent noise
-        if seed is not None:
-            seed += 1  # Different seed for independent noise
-        lr2 = self.noise_lr2.apply(downsampled, seed=seed)
+        # Step 4: Downsampling with sensor PSF (D) - Spatial integration smooths noise
+        downsampled = self.downsample.apply(poisson_noisy)
+        
+        # Step 5: Gaussian noise (electronic read noise) - AFTER downsampling (on LR)
+        lr2 = self.noise_lr2.apply_gaussian_only(downsampled, seed=poisson_seed)
         
         return lr2
     

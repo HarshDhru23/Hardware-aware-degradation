@@ -10,7 +10,7 @@ shift_std: 0.05         # Standard deviation for Gaussian shift distribution
                        # Set to 0.0 for deterministic shift
 
 # Optical blur parameters
-optical_sigma: 0.8  # Gaussian blur standard deviation (range: 0.5-3.0)
+optical_sigma: 0.6  # Gaussian blur standard deviation (range: 0.5-3.0)
                     # Simulates satellite sensor PSF (Point Spread Function)
 optical_kernel_size: 5  # Gaussian kernel size, must be odd (range: 3-15)
                         
@@ -20,15 +20,18 @@ motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1
                        
 
 # Noise parameters
-enable_gaussian: false  # Enable Gaussian noise (read noise from electronics)
+enable_gaussian: true  # Enable Gaussian noise (read noise from electronics)
 enable_poisson: true   # Enable Poisson noise (photon shot noise - RECOMMENDED)
 gaussian_mean: 0.0     # Gaussian noise mean (range: -10.0 to 10.0)
-gaussian_std: 0.001    # Gaussian noise std dev - read noise (range: 0.001-20.0)
+gaussian_std: 0.00015   # Gaussian noise std dev - read noise (range: 0.0001-0.1)
+                       # For normalized [0,1]: 0.0001-0.001 typical, 0.001-0.01 high noise
 poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0) [DEPRECATED - use photon_gain]
 photon_gain: 10000.0    # Photon gain factor (range: 10-10000)
-                       # Increased from 1000 to 5000 for MUCH less Poisson noise
-                       # Higher = more photons = better SNR
-                       # 5000 simulates high-quality satellite sensor in good lighting
+
+# Quantization parameters (ADC simulation)
+enable_quantization: true  # Enable ADC quantization to match real sensor
+quantization_bits: 11      # Bit depth (11-bit for WorldView-3, range: 8-16)
+                           # 11-bit = 2048 levels (0-2047)
 
 # Data loading parameters
 normalize: true        # Normalize pixel values to [0, 1]
@@ -41,7 +44,7 @@ patch_stride: 256      # Stride for patch extraction (default: hr_patch_size)
 min_valid_pixels: 0.95 # Minimum fraction of valid pixels in patch (range: 0.5-1.0)
 
 # File I/O parameters
-input_format: "geotiff"  # Input format: geotiff, tiff, png
+input_format: "tiff"  # Input format: geotiff, tiff, png
 output_format: "npy"     # Output format: npy, png, tiff
 save_visualization: true # Save visualization plots
 
