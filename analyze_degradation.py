@@ -138,6 +138,12 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     print("STEP-BY-STEP DEGRADATION ANALYSIS")
     print("="*70)
     
+    # Extract 256x256 HR patch for analysis
+    print("\nExtracting 256x256 center patch from HR image for analysis...")
+    hr_patch = extract_center_patch(hr_image, 256)
+    print(f"   HR patch shape: {hr_patch.shape}")
+    print(f"   HR patch range: [{hr_patch.min():.3f}, {hr_patch.max():.3f}]")
+    
     # Create intermediate outputs directory
     intermediate_dir = output_dir / "intermediate"
     intermediate_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +154,7 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     
     # Step 1: Warping (LR1 uses identity - no shift)
     print("Step 1: Warping (identity - no shift)...")
-    hr_warped_lr1 = pipeline.warp_lr1.apply(hr_image)
+    hr_warped_lr1 = pipeline.warp_lr1.apply(hr_patch)
     print(f"   Output shape: {hr_warped_lr1.shape}")
     print(f"   Value range: [{hr_warped_lr1.min():.3f}, {hr_warped_lr1.max():.3f}]")
     
@@ -159,48 +165,61 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     print(f"   Value range: [{hr_blurred_lr1.min():.3f}, {hr_blurred_lr1.max():.3f}]")
     
     # Blur analysis
-    print("   Analyzing blur effects on 256x256 center patch...")
-    hr_warped_patch = extract_center_patch(hr_warped_lr1, 256)
-    hr_blurred_patch = extract_center_patch(hr_blurred_lr1, 256)
+    print("   Analyzing blur effects...")
     plot_blur_analysis(
-        original=hr_warped_patch,
-        blurred=hr_blurred_patch,
-        title="LR1 Blur Analysis (256x256 Center Patch)",
+        original=hr_warped_lr1,
+        blurred=hr_blurred_lr1,
+        title="LR1 Blur Analysis (256x256 HR)",
         save_path=str(intermediate_dir / "lr1_blur_analysis.png")
     )
     print(f"   Saved: lr1_blur_analysis.png")
     
-    # Step 3: Downsampling
-    print("Step 3: Downsampling...")
-    lr1_clean = pipeline.downsample.apply(hr_blurred_lr1)
-    print(f"   Output shape: {lr1_clean.shape}")
-    print(f"   Value range: [{lr1_clean.min():.3f}, {lr1_clean.max():.3f}]")
+    # Step 3: Poisson noise (on HR before downsampling)
+    print("Step 3: Adding Poisson noise (photon shot noise on HR)...")
+    hr_poisson_lr1 = pipeline.noise_lr1.apply_poisson_only(hr_blurred_lr1, seed=seed)
+    print(f"   Output shape: {hr_poisson_lr1.shape}")
+    print(f"   Value range: [{hr_poisson_lr1.min():.3f}, {hr_poisson_lr1.max():.3f}]")
     
-    # Step 4: Noise addition
-    print("Step 4: Adding noise (Poisson-Gaussian)...")
-    lr1_final = pipeline.noise_lr1.apply(lr1_clean, seed=seed)
+    # Poisson noise analysis
+    print("   Analyzing Poisson noise effects...")
+    plot_noise_analysis(
+        clean_image=hr_blurred_lr1,
+        noisy_image=hr_poisson_lr1,
+        title="LR1 Poisson Noise Analysis (256x256 HR)",
+        save_path=str(intermediate_dir / "lr1_poisson_analysis.png")
+    )
+    print(f"   Saved: lr1_poisson_analysis.png")
+    
+    # Step 4: Downsampling
+    print("Step 4: Downsampling (sensor integration)...")
+    lr1_downsampled = pipeline.downsample.apply(hr_poisson_lr1)
+    print(f"   Output shape: {lr1_downsampled.shape}")
+    print(f"   Value range: [{lr1_downsampled.min():.3f}, {lr1_downsampled.max():.3f}]")
+    print(f"   Note: Downsampling smooths HR Poisson noise by factor of √16 = 4x")
+    
+    # Step 5: Gaussian noise + quantization (on LR after downsampling)
+    print("Step 5: Adding Gaussian noise + 11-bit quantization (read noise on LR)...")
+    lr1_final = pipeline.noise_lr1.apply_gaussian_only(lr1_downsampled, seed=seed)
     print(f"   Output shape: {lr1_final.shape}")
     print(f"   Value range: [{lr1_final.min():.3f}, {lr1_final.max():.3f}]")
     
-    # Noise analysis
-    print("   Analyzing noise characteristics on 64x64 center patch...")
-    lr1_clean_patch = extract_center_patch(lr1_clean, 64)
-    lr1_final_patch = extract_center_patch(lr1_final, 64)
+    # Gaussian noise + quantization analysis (full LR image)
+    print("   Analyzing Gaussian noise + quantization on full LR...")
     plot_noise_analysis(
-        clean_image=lr1_clean_patch,
-        noisy_image=lr1_final_patch,
-        title="LR1 Noise Analysis (64x64 Center Patch)",
-        save_path=str(intermediate_dir / "lr1_noise_analysis.png")
+        clean_image=lr1_downsampled,
+        noisy_image=lr1_final,
+        title="LR1 Gaussian Noise + Quantization (64x64 LR)",
+        save_path=str(intermediate_dir / "lr1_gaussian_quantization_analysis.png")
     )
-    print(f"   Saved: lr1_noise_analysis.png")
+    print(f"   Saved: lr1_gaussian_quantization_analysis.png")
     
     # ========== LR2 BRANCH ANALYSIS ==========
     print("\n[LR2 Branch - Shifted Frame]")
     print("-" * 70)
     
     # Step 1: Warping (LR2 uses shift)
-    print("Step 1: Warping (shift by 2,2 pixels)...")
-    hr_warped_lr2 = pipeline.warp_lr2.apply(hr_image)
+    print("Step 1: Warping (with stochastic shift)...")
+    hr_warped_lr2 = pipeline.warp_lr2.apply(hr_patch)
     print(f"   Output shape: {hr_warped_lr2.shape}")
     print(f"   Value range: [{hr_warped_lr2.min():.3f}, {hr_warped_lr2.max():.3f}]")
     
@@ -215,40 +234,53 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     print(f"   Value range: [{hr_blurred_lr2.min():.3f}, {hr_blurred_lr2.max():.3f}]")
     
     # Blur analysis
-    print("   Analyzing blur effects on 256x256 center patch...")
-    hr_warped_patch = extract_center_patch(hr_warped_lr2, 256)
-    hr_blurred_patch = extract_center_patch(hr_blurred_lr2, 256)
+    print("   Analyzing blur effects...")
     plot_blur_analysis(
-        original=hr_warped_patch,
-        blurred=hr_blurred_patch,
-        title="LR2 Blur Analysis (256x256 Center Patch)",
+        original=hr_warped_lr2,
+        blurred=hr_blurred_lr2,
+        title="LR2 Blur Analysis (256x256 HR)",
         save_path=str(intermediate_dir / "lr2_blur_analysis.png")
     )
     print(f"   Saved: lr2_blur_analysis.png")
     
-    # Step 3: Downsampling
-    print("Step 3: Downsampling...")
-    lr2_clean = pipeline.downsample.apply(hr_blurred_lr2)
-    print(f"   Output shape: {lr2_clean.shape}")
-    print(f"   Value range: [{lr2_clean.min():.3f}, {lr2_clean.max():.3f}]")
+    # Step 3: Poisson noise (on HR before downsampling)
+    print("Step 3: Adding Poisson noise (photon shot noise on HR)...")
+    hr_poisson_lr2 = pipeline.noise_lr2.apply_poisson_only(hr_blurred_lr2, seed=seed+1)
+    print(f"   Output shape: {hr_poisson_lr2.shape}")
+    print(f"   Value range: [{hr_poisson_lr2.min():.3f}, {hr_poisson_lr2.max():.3f}]")
     
-    # Step 4: Noise addition
-    print("Step 4: Adding noise (Poisson-Gaussian)...")
-    lr2_final = pipeline.noise_lr2.apply(lr2_clean, seed=seed+1)
+    # Poisson noise analysis
+    print("   Analyzing Poisson noise effects...")
+    plot_noise_analysis(
+        clean_image=hr_blurred_lr2,
+        noisy_image=hr_poisson_lr2,
+        title="LR2 Poisson Noise Analysis (256x256 HR)",
+        save_path=str(intermediate_dir / "lr2_poisson_analysis.png")
+    )
+    print(f"   Saved: lr2_poisson_analysis.png")
+    
+    # Step 4: Downsampling
+    print("Step 4: Downsampling (sensor integration)...")
+    lr2_downsampled = pipeline.downsample.apply(hr_poisson_lr2)
+    print(f"   Output shape: {lr2_downsampled.shape}")
+    print(f"   Value range: [{lr2_downsampled.min():.3f}, {lr2_downsampled.max():.3f}]")
+    print(f"   Note: Downsampling smooths HR Poisson noise by factor of √16 = 4x")
+    
+    # Step 5: Gaussian noise + quantization (on LR after downsampling)
+    print("Step 5: Adding Gaussian noise + 11-bit quantization (read noise on LR)...")
+    lr2_final = pipeline.noise_lr2.apply_gaussian_only(lr2_downsampled, seed=seed+1)
     print(f"   Output shape: {lr2_final.shape}")
     print(f"   Value range: [{lr2_final.min():.3f}, {lr2_final.max():.3f}]")
     
-    # Noise analysis
-    print("   Analyzing noise characteristics on 64x64 center patch...")
-    lr2_clean_patch = extract_center_patch(lr2_clean, 64)
-    lr2_final_patch = extract_center_patch(lr2_final, 64)
+    # Gaussian noise + quantization analysis (full LR image)
+    print("   Analyzing Gaussian noise + quantization on full LR...")
     plot_noise_analysis(
-        clean_image=lr2_clean_patch,
-        noisy_image=lr2_final_patch,
-        title="LR2 Noise Analysis (64x64 Center Patch)",
-        save_path=str(intermediate_dir / "lr2_noise_analysis.png")
+        clean_image=lr2_downsampled,
+        noisy_image=lr2_final,
+        title="LR2 Gaussian Noise + Quantization (64x64 LR)",
+        save_path=str(intermediate_dir / "lr2_gaussian_quantization_analysis.png")
     )
-    print(f"   Saved: lr2_noise_analysis.png")
+    print(f"   Saved: lr2_gaussian_quantization_analysis.png")
     
     # ========== FINAL COMPARISON ==========
     print("\n[Final LR1 vs LR2 Comparison]")
@@ -263,7 +295,7 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     
     # Basic 3-panel view
     visualize_degradation_results(
-        hr_image=hr_image,
+        hr_image=hr_patch,
         lr1_image=lr1_final,
         lr2_image=lr2_final,
         title="Degradation Pipeline Results - Overview",
@@ -272,8 +304,8 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     print(f"   Saved: degradation_overview.png")
     
     # Detailed comparison with zoom
-    # Select center region for zoom
-    h, w = hr_image.shape
+    # Select center region for zoom (on HR patch)
+    h, w = hr_patch.shape
     zoom_size = min(h, w) // 4
     center_y, center_x = h // 2, w // 2
     zoom_region = (
@@ -284,7 +316,7 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     )
     
     plot_degradation_comparison(
-        original=hr_image,
+        original=hr_patch,
         degraded_images={'LR1 (Reference)': lr1_final, 'LR2 (Shifted)': lr2_final},
         region=zoom_region,
         save_path=str(output_dir / "degradation_comparison_zoom.png")
@@ -292,13 +324,15 @@ def analyze_pipeline_step_by_step(pipeline: DegradationPipeline,
     print(f"   Saved: degradation_comparison_zoom.png")
     
     return {
-        'hr': hr_image,
+        'hr': hr_patch,
         'lr1': lr1_final,
         'lr2': lr2_final,
-        'lr1_clean': lr1_clean,
-        'lr2_clean': lr2_clean,
+        'lr1_downsampled': lr1_downsampled,
+        'lr2_downsampled': lr2_downsampled,
         'hr_blurred_lr1': hr_blurred_lr1,
-        'hr_blurred_lr2': hr_blurred_lr2
+        'hr_blurred_lr2': hr_blurred_lr2,
+        'hr_poisson_lr1': hr_poisson_lr1,
+        'hr_poisson_lr2': hr_poisson_lr2
     }
 
 
@@ -361,11 +395,17 @@ def main():
         config_manager = ConfigManager(args.config)
         config = config_manager.config
         print(f"   Configuration loaded successfully")
-        print(f"   Downsampling factor: {config.get('downsampling_factor', 4)}")
-        print(f"   Optical sigma: {config.get('optical_sigma', 0.8)}")
-        print(f"   Gaussian noise std: {config.get('gaussian_std', 0.01)}")
-        print(f"   Poisson noise enabled: {config.get('enable_poisson', False)}")
-        print(f"   Photon gain: {config.get('photon_gain', 100.0)}")
+        print(f"\n   Key Parameters:")
+        print(f"   - Downsampling factor: {config.get('downsampling_factor', 4)}")
+        print(f"   - Optical sigma: {config.get('optical_sigma', 0.8)}")
+        print(f"   - Motion kernel size: {config.get('motion_kernel_size', 3)}")
+        print(f"   - Shift mean: {config.get('shift_mean', 0.5)}")
+        print(f"   - Shift std: {config.get('shift_std', 0.1)}")
+        print(f"   - Gaussian noise std: {config.get('gaussian_std', 0.01)}")
+        print(f"   - Poisson noise enabled: {config.get('enable_poisson', False)}")
+        print(f"   - Photon gain: {config.get('photon_gain', 100.0)}")
+        print(f"   - Enable quantization: {config.get('enable_quantization', False)}")
+        print(f"   - Quantization bits: {config.get('quantization_bits', 8)}")
         
         # Initialize pipeline
         print(f"\n2. Initializing degradation pipeline...")
@@ -402,8 +442,10 @@ def main():
         np.save(output_dir / "hr_image.npy", results['hr'])
         np.save(output_dir / "lr1_final.npy", results['lr1'])
         np.save(output_dir / "lr2_final.npy", results['lr2'])
-        np.save(output_dir / "lr1_clean.npy", results['lr1_clean'])
-        np.save(output_dir / "lr2_clean.npy", results['lr2_clean'])
+        np.save(output_dir / "lr1_downsampled.npy", results['lr1_downsampled'])
+        np.save(output_dir / "lr2_downsampled.npy", results['lr2_downsampled'])
+        np.save(output_dir / "hr_poisson_lr1.npy", results['hr_poisson_lr1'])
+        np.save(output_dir / "hr_poisson_lr2.npy", results['hr_poisson_lr2'])
         print(f"   Saved numpy arrays to {output_dir}")
         
         # Print summary
@@ -415,14 +457,18 @@ def main():
         print("  Main visualizations:")
         print("    - degradation_overview.png")
         print("    - degradation_comparison_zoom.png")
-        print("  Intermediate analysis:")
+        print("  Intermediate analysis (LR1):")
         print("    - intermediate/lr1_blur_analysis.png")
-        print("    - intermediate/lr1_noise_analysis.png")
+        print("    - intermediate/lr1_poisson_analysis.png")
+        print("    - intermediate/lr1_gaussian_quantization_analysis.png")
+        print("  Intermediate analysis (LR2):")
         print("    - intermediate/lr2_blur_analysis.png")
-        print("    - intermediate/lr2_noise_analysis.png")
+        print("    - intermediate/lr2_poisson_analysis.png")
+        print("    - intermediate/lr2_gaussian_quantization_analysis.png")
         print("  Numpy arrays:")
         print("    - hr_image.npy, lr1_final.npy, lr2_final.npy")
-        print("    - lr1_clean.npy, lr2_clean.npy")
+        print("    - lr1_downsampled.npy, lr2_downsampled.npy")
+        print("    - hr_poisson_lr1.npy, hr_poisson_lr2.npy")
         
         return 0
         

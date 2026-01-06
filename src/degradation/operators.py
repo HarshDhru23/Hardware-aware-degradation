@@ -105,41 +105,41 @@ class WarpingOperator:
 
 class BlurOperator:
     """
-    Blur operator B_k that applies optical and motion blur.
+    Anisotropic Gaussian PSF blur operator B_k.
     
-    Optical blur: 2D Gaussian kernel
-    Motion blur: 1D vertical kernel (TDI velocity mismatch simulation)
+    Models the satellite sensor Point Spread Function (PSF) as a 2D anisotropic Gaussian
+    with different sigma values in x and y directions, and optional rotation.
+    
+    PSF(x, y) = exp(-((x*cos(θ) + y*sin(θ))²/(2σ_x²) + (-x*sin(θ) + y*cos(θ))²/(2σ_y²)))
     """
     
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialize blur operator from config.
+        Initialize anisotropic blur operator from config.
         
         Args:
-            config: Configuration dictionary containing blur parameters
+            config: Configuration dictionary containing PSF blur parameters
         """
-        # Load values from config - these MUST come from config file
-        # No fallback defaults to ensure config changes are always reflected
-        self.optical_sigma = config.get('optical_sigma')
-        self.optical_kernel_size = config.get('optical_kernel_size')
-        self.motion_kernel_size = config.get('motion_kernel_size')
+        # Load values from config
+        self.sigma_x = config.get('psf_sigma_x')
+        self.sigma_y = config.get('psf_sigma_y')
+        self.theta = config.get('psf_theta', 0.0)  # Orientation angle in degrees
+        self.kernel_size = config.get('psf_kernel_size')
         
-        if self.optical_sigma is None or self.optical_kernel_size is None or self.motion_kernel_size is None:
-            raise ValueError("BlurOperator requires 'optical_sigma', 'optical_kernel_size', and 'motion_kernel_size' in config")
+        if self.sigma_x is None or self.sigma_y is None or self.kernel_size is None:
+            raise ValueError("BlurOperator requires 'psf_sigma_x', 'psf_sigma_y', and 'psf_kernel_size' in config")
         
         # Validate and clip to safe ranges
-        self.optical_sigma = np.clip(self.optical_sigma, 0.5, 3.0)
-        self.optical_kernel_size = max(3, min(15, self.optical_kernel_size))
-        if self.optical_kernel_size % 2 == 0:
-            self.optical_kernel_size += 1
-            
-        self.motion_kernel_size = max(1, min(9, self.motion_kernel_size))
-        if self.motion_kernel_size % 2 == 0:
-            self.motion_kernel_size += 1
+        self.sigma_x = np.clip(self.sigma_x, 0.5, 2.0)
+        self.sigma_y = np.clip(self.sigma_y, 0.5, 2.0)
+        self.theta = np.clip(self.theta, 0.0, 180.0)
+        self.kernel_size = max(3, min(15, self.kernel_size))
+        if self.kernel_size % 2 == 0:
+            self.kernel_size += 1
     
     def apply(self, image: np.ndarray) -> np.ndarray:
         """
-        Apply optical and motion blur to image.
+        Apply anisotropic Gaussian PSF blur to image.
         
         Args:
             image: Input image (H, W) or (H, W, C)
@@ -147,22 +147,53 @@ class BlurOperator:
         Returns:
             Blurred image with same shape as input
         """
-        # Apply optical blur (2D Gaussian)
-        blurred = gaussian_filter(image, sigma=self.optical_sigma)
-        
-        # Apply motion blur (1D vertical kernel)
-        if self.motion_kernel_size > 1:
-            # Create 1D motion blur kernel (vertical direction)
-            motion_kernel = np.ones((self.motion_kernel_size, 1)) / self.motion_kernel_size
+        # For isotropic case (sigma_x == sigma_y and theta == 0), use simple Gaussian
+        if abs(self.sigma_x - self.sigma_y) < 0.01 and abs(self.theta) < 0.01:
+            blurred = gaussian_filter(image, sigma=self.sigma_x)
+        else:
+            # Create anisotropic Gaussian kernel
+            kernel = self._create_anisotropic_gaussian_kernel()
             
+            # Apply convolution
             if len(image.shape) == 2:
-                blurred = cv2.filter2D(blurred, -1, motion_kernel)
+                blurred = cv2.filter2D(image, -1, kernel)
             else:
                 # Apply to each channel separately
+                blurred = np.zeros_like(image)
                 for c in range(image.shape[2]):
-                    blurred[:, :, c] = cv2.filter2D(blurred[:, :, c], -1, motion_kernel)
+                    blurred[:, :, c] = cv2.filter2D(image[:, :, c], -1, kernel)
         
         return blurred
+    
+    def _create_anisotropic_gaussian_kernel(self) -> np.ndarray:
+        """
+        Create 2D anisotropic Gaussian kernel with rotation.
+        
+        Returns:
+            Normalized 2D Gaussian kernel of size (kernel_size, kernel_size)
+        """
+        # Create coordinate grid
+        ax = np.arange(-self.kernel_size // 2 + 1., self.kernel_size // 2 + 1.)
+        xx, yy = np.meshgrid(ax, ax)
+        
+        # Convert theta to radians
+        theta_rad = np.deg2rad(self.theta)
+        
+        # Rotation matrix components
+        cos_theta = np.cos(theta_rad)
+        sin_theta = np.sin(theta_rad)
+        
+        # Rotate coordinates
+        x_rot = xx * cos_theta + yy * sin_theta
+        y_rot = -xx * sin_theta + yy * cos_theta
+        
+        # Anisotropic Gaussian
+        kernel = np.exp(-(x_rot**2 / (2 * self.sigma_x**2) + y_rot**2 / (2 * self.sigma_y**2)))
+        
+        # Normalize
+        kernel = kernel / kernel.sum()
+        
+        return kernel
 
 
 class DownsamplingOperator:
@@ -363,25 +394,81 @@ class NoiseOperator:
     
     def apply_gaussian_only(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
         """
-        Apply ONLY Gaussian noise (read noise) to LR image, then quantize.
-        This should be called AFTER downsampling to simulate electronic readout + ADC.
+        Apply ONLY Gaussian noise (read noise) to image.
+        
+        Args:
+            image: Input image (H, W) or (H, W, C), normalized to [0, 1]
+            seed: Random seed for reproducible noise
+        
+        Returns:
+            Image with Gaussian read noise, clipped to [0, 1]
+        """
+        if not self.enable_gaussian:
+            return image.copy()
+        
+        if seed is not None:
+            np.random.seed(seed)
+        
+        noisy_image = image.copy().astype(np.float64)
+        
+        # Add Gaussian read noise
+        read_noise = np.random.normal(
+            self.gaussian_mean,
+            self.gaussian_std,
+            image.shape
+        ).astype(np.float64)
+        noisy_image += read_noise
+        
+        # Clip to valid range
+        noisy_image = np.clip(noisy_image, 0.0, 1.0)
+        
+        return noisy_image.astype(image.dtype)
+    
+    def apply_noise_and_quantization(self, image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """
+        Apply complete noise model: Poisson + Gaussian + ADC quantization.
+        
+        This should be applied to LR images AFTER downsampling.
+        
+        Physical ordering for sensor:
+        1. Downsampling (spatial integration)
+        2. Poisson noise (photon shot noise on integrated signal)
+        3. Gaussian noise (electronic read noise)
+        4. ADC quantization
+        
+        Photon gain formula: photon_gain = normalizing_number * sensor_factor
+        - normalizing_number = 2047 (for 11-bit ADC)
+        - sensor_factor = 10-20 (random per sensor, fixed at ~14.65 for 30k gain)
+        - Typical range: 20k - 40k
+        - Using: 30000 for our simulations
         
         Args:
             image: Input LR image (H, W) or (H, W, C), normalized to [0, 1]
             seed: Random seed for reproducible noise
         
         Returns:
-            Image with Gaussian read noise and quantization, clipped to [0, 1]
+            Image with Poisson + Gaussian noise and quantization, clipped to [0, 1]
         """
-        if not self.enable_gaussian:
-            noisy_image = image.copy()
-        else:
-            if seed is not None:
-                np.random.seed(seed)
+        if seed is not None:
+            np.random.seed(seed)
+        
+        noisy_image = image.copy().astype(np.float64)
+        
+        # Step 1: Apply Poisson noise (photon shot noise on LR after downsampling)
+        if self.enable_poisson:
+            # Scale to photon counts
+            photon_counts = noisy_image * self.photon_gain
+            photon_counts = np.maximum(photon_counts, 0.0)
             
-            noisy_image = image.copy().astype(np.float64)
+            # Apply Poisson noise
+            noisy_photons = np.random.poisson(photon_counts).astype(np.float64)
             
-            # Add read noise
+            # Scale back to [0,1]
+            noisy_image = noisy_photons / self.photon_gain
+            noisy_image = np.clip(noisy_image, 0.0, 1.0)
+        
+        # Step 2: Add Gaussian read noise
+        if self.enable_gaussian:
             read_noise = np.random.normal(
                 self.gaussian_mean,
                 self.gaussian_std,
@@ -392,7 +479,7 @@ class NoiseOperator:
             # Clip to valid range before quantization
             noisy_image = np.clip(noisy_image, 0.0, 1.0)
         
-        # Apply quantization (ADC simulation) - WorldView-3 is 11-bit
+        # Step 3: Apply ADC quantization (WorldView-3 is 11-bit)
         if self.enable_quantization:
             max_value = (2 ** self.quantization_bits) - 1  # e.g., 2047 for 11-bit
             

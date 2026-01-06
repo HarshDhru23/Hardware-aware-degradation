@@ -4,29 +4,29 @@
 # Core pipeline parameters
 downsampling_factor: 4  # 4x super-resolution factor (range: 2-8)
 
-# Shift parameters (sub-pixel registration error simulation)
-shift_mean: 0.5        # Mean shift in LR pixels (typically 0.5 for half-pixel offset)
-shift_std: 0.05         # Standard deviation for Gaussian shift distribution
-                       # Set to 0.0 for deterministic shift
+# Multi-frame configuration (4 LR frames for 4x downsampling)
+num_lr_frames: 4       # Number of LR frames to generate
+shift_mode: 'deterministic'  # 'deterministic' or 'stochastic'
+shift_values: [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]  # Sub-pixel shifts (LR pixels)
 
-# Optical blur parameters
-optical_sigma: 0.6  # Gaussian blur standard deviation (range: 0.5-3.0)
-                    # Simulates satellite sensor PSF (Point Spread Function)
-optical_kernel_size: 5  # Gaussian kernel size, must be odd (range: 3-15)
-                        
-
-# Motion blur parameters (TDI velocity mismatch simulation)
-motion_kernel_size: 3  # Vertical motion blur kernel size, must be odd (range: 1-9, 1=disabled)
+# Anisotropic Gaussian PSF blur parameters
+# Models satellite sensor PSF as anisotropic 2D Gaussian
+psf_sigma_x: 0.8       # Horizontal PSF sigma (range: 0.5-2.0)
+psf_sigma_y: 1.0       # Vertical PSF sigma (range: 0.5-2.0)
+psf_theta: 0.0         # PSF orientation angle in degrees (0-180)
+psf_kernel_size: 9     # Gaussian kernel size, must be odd (range: 3-15)
                        
 
 # Noise parameters
 enable_gaussian: true  # Enable Gaussian noise (read noise from electronics)
 enable_poisson: true   # Enable Poisson noise (photon shot noise - RECOMMENDED)
 gaussian_mean: 0.0     # Gaussian noise mean (range: -10.0 to 10.0)
-gaussian_std: 0.00015   # Gaussian noise std dev - read noise (range: 0.0001-0.1)
+gaussian_std: 0.0005   # Gaussian noise std dev - read noise (range: 0.0001-0.1)
                        # For normalized [0,1]: 0.0001-0.001 typical, 0.001-0.01 high noise
 poisson_lambda: 1.0    # Poisson noise scaling factor (range: 0.1-5.0) [DEPRECATED - use photon_gain]
-photon_gain: 10000.0    # Photon gain factor (range: 10-10000)
+photon_gain: 30000.0    # Photon gain factor for sensor (fixed: 20k-40k, using 30k)
+                       # Formula: photon_gain = normalizing_number * random_sensor_factor
+                       # Where normalizing_number = 2047 (11-bit) and sensor_factor = 10-20
 
 # Quantization parameters (ADC simulation)
 enable_quantization: true  # Enable ADC quantization to match real sensor

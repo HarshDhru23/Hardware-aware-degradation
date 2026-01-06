@@ -97,10 +97,10 @@ class GeoTIFFLoader:
             
             # Handle different bit depths
             if src.dtypes[0] in ['uint16', 'int16']:
-                # 16-bit images
+                # 16-bit images - normalize by 11-bit max (2047) to match sensor ADC
                 if self.normalize:
-                    image = image.astype(np.float32) / 65535.0
-                    self.logger.debug(f"Normalized 16-bit image to [0, 1] range")
+                    image = image.astype(np.float32) / 2047.0
+                    self.logger.debug(f"Normalized 16-bit image by 2047 (11-bit ADC) to [0, 1] range")
             elif src.dtypes[0] in ['uint8']:
                 # 8-bit images
                 if self.normalize:
@@ -125,8 +125,8 @@ class GeoTIFFLoader:
             # Handle different bit depths
             if image.dtype == np.uint16:
                 if self.normalize:
-                    image = image.astype(np.float32) / 65535.0
-                    self.logger.debug(f"Normalized 16-bit image to [0, 1] range")
+                    image = image.astype(np.float32) / 2047.0
+                    self.logger.debug(f"Normalized 16-bit image by 2047 (11-bit ADC) to [0, 1] range")
             elif image.dtype == np.uint8:
                 if self.normalize:
                     image = image.astype(np.float32) / 255.0
@@ -150,9 +150,10 @@ class GeoTIFFLoader:
                 return np.clip(image, 0, 255).astype(np.uint8)
         elif self.target_dtype == 'uint16':
             if self.normalize:
-                return (image * 65535).astype(np.uint16)
+                # Convert back to 11-bit range (0-2047) stored in uint16
+                return (image * 2047).astype(np.uint16)
             else:
-                return np.clip(image, 0, 65535).astype(np.uint16)
+                return np.clip(image, 0, 2047).astype(np.uint16)
         else:
             raise ValueError(f"Unsupported target dtype: {self.target_dtype}")
     

@@ -132,53 +132,51 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
             hr_image = hr_image[:new_h, :new_w]
             print(f"   New HR image shape: {hr_image.shape}")
         
-        # 4. Generate LR1 and LR2
-        print(f"\n4. Generating LR1 and LR2 images (seed={seed})...")
-        lr1, lr2 = pipeline.process_image(hr_image, seed=seed)
-        print(f"   LR1 shape: {lr1.shape}")
-        print(f"   LR2 shape: {lr2.shape}")
-        print(f"   LR1 range: [{lr1.min():.3f}, {lr1.max():.3f}]")
-        print(f"   LR2 range: [{lr2.min():.3f}, {lr2.max():.3f}]")
+        # 4. Generate all 4 LR frames
+        print(f"\n4. Generating 4 LR frames (seed={seed})...")
+        lr_frames = pipeline.process_image(hr_image, seed=seed)
+        print(f"   Generated {len(lr_frames)} LR frames")
+        for i, lr in enumerate(lr_frames):
+            shift = pipeline.shift_values[i]
+            print(f"   LR{i} (shift={shift}): shape={lr.shape}, range=[{lr.min():.3f}, {lr.max():.3f}]")
 
-        # # After generating lr1, lr2, add this before visualization:
-        # print(f"Before clipping - LR1 range: [{lr1.min():.3f}, {lr1.max():.3f}]")
-        # lr1 = np.clip(lr1, 0, 1)
-        # lr2 = np.clip(lr2, 0, 1)
-        # print(f"After clipping - LR1 range: [{lr1.min():.3f}, {lr1.max():.3f}]")  
-
-        # Calculate difference between LR1 and LR2
-        diff = np.abs(lr1.astype(np.float64) - lr2.astype(np.float64))
-        print(f"   Mean difference between LR1 and LR2: {diff.mean():.6f}")
-        print(f"   Max difference between LR1 and LR2: {diff.max():.6f}")
-        
-        # 5. Save outputs
+        # Calculate differences between frames
+        print(f"\n   Inter-frame differences:")
+        for i in range(len(lr_frames)-1):
+            diff = np.abs(lr_frames[i].astype(np.float64) - lr_frames[i+1].astype(np.float64))
+            print(f"   LR{i} vs LR{i+1}: mean={diff.mean():.6f}, max={diff.max():.6f}")        # 5. Save outputs
         print(f"\n5. Saving outputs to: {output_dir}")
         
         # Save as numpy arrays
         np.save(output_dir / "hr_image.npy", hr_image)
-        np.save(output_dir / "lr1_image.npy", lr1)
-        np.save(output_dir / "lr2_image.npy", lr2)
-        print(f"   Saved numpy arrays: hr_image.npy, lr1_image.npy, lr2_image.npy")
+        for i, lr in enumerate(lr_frames):
+            np.save(output_dir / f"lr{i}_image.npy", lr)
+        print(f"   Saved numpy arrays: hr_image.npy, lr0_image.npy, lr1_image.npy, lr2_image.npy, lr3_image.npy")
         
         # 6. Visualize results
         print("\n6. Creating visualization...")
         
-        # Main visualization
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        # Main visualization - HR + 4 LR frames
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
         
-        axes[0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
-        axes[0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
-        axes[0].axis('off')
+        # HR image (spans first column)
+        axes[0, 0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
+        axes[0, 0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
+        axes[0, 0].axis('off')
         
-        axes[1].imshow(lr1, cmap='gray', vmin=np.percentile(lr1, 2), vmax=np.percentile(lr1, 98))
-        axes[1].set_title(f'LR1 (P1 Sensor - Reference)\nShape: {lr1.shape}', fontsize=12, fontweight='bold')
-        axes[1].axis('off')
+        # LR frames with their shift values
+        positions = [(0, 1), (0, 2), (1, 1), (1, 2)]
+        for i, (row, col) in enumerate(positions):
+            lr = lr_frames[i]
+            shift = pipeline.shift_values[i]
+            axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+            axes[row, col].set_title(f'LR{i} (shift={shift})\nShape: {lr.shape}', fontsize=12, fontweight='bold')
+            axes[row, col].axis('off')
         
-        axes[2].imshow(lr2, cmap='gray', vmin=np.percentile(lr2, 2), vmax=np.percentile(lr2, 98))
-        axes[2].set_title(f'LR2 (P2 Sensor - Shifted)\nShape: {lr2.shape}', fontsize=12, fontweight='bold')
-        axes[2].axis('off')
+        # Hide the bottom-left subplot
+        axes[1, 0].axis('off')
         
-        plt.suptitle('Hardware-aware Degradation Pipeline - Test Results', fontsize=14, fontweight='bold')
+        plt.suptitle('Hardware-aware Degradation Pipeline - 4 LR Frames', fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         output_path = output_dir / "degradation_results.png"
@@ -186,39 +184,41 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         print(f"   Saved visualization: {output_path}")
         plt.show()
         
-        # Create detailed comparison
+        # Create detailed comparison - show all 4 LR frames in grid
         fig, axes = plt.subplots(2, 2, figsize=(12, 12))
         
-        # LR1
-        axes[0, 0].imshow(lr1, cmap='gray', vmin=np.percentile(lr1, 2), vmax=np.percentile(lr1, 98))
-        axes[0, 0].set_title('LR1 (P1 Sensor)', fontweight='bold')
-        axes[0, 0].axis('off')
+        for i in range(4):
+            row = i // 2
+            col = i % 2
+            lr = lr_frames[i]
+            shift = pipeline.shift_values[i]
+            axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+            axes[row, col].set_title(f'LR{i} (shift={shift})', fontweight='bold')
+            axes[row, col].axis('off')
         
-        # LR2
-        axes[0, 1].imshow(lr2, cmap='gray', vmin=np.percentile(lr2, 2), vmax=np.percentile(lr2, 98))
-        axes[0, 1].set_title('LR2 (P2 Sensor)', fontweight='bold')
-        axes[0, 1].axis('off')
-        
-        # Difference map
-        axes[1, 0].imshow(diff, cmap='RdBu_r', vmin=0, vmax=diff.max())
-        axes[1, 0].set_title(f'Absolute Difference\nMean: {diff.mean():.6f}', fontweight='bold')
-        axes[1, 0].axis('off')
-        
-        # Histogram comparison
-        axes[1, 1].hist(lr1.flatten(), bins=50, alpha=0.6, label='LR1', density=True)
-        axes[1, 1].hist(lr2.flatten(), bins=50, alpha=0.6, label='LR2', density=True)
-        axes[1, 1].set_title('Pixel Value Distribution', fontweight='bold')
-        axes[1, 1].set_xlabel('Pixel Value')
-        axes[1, 1].set_ylabel('Density')
-        axes[1, 1].legend()
-        axes[1, 1].grid(True, alpha=0.3)
-        
-        plt.suptitle('LR1 vs LR2 Comparison', fontsize=14, fontweight='bold')
+        plt.suptitle('All 4 LR Frames Comparison', fontsize=14, fontweight='bold')
         plt.tight_layout()
         
-        comparison_path = output_dir / "lr1_lr2_comparison.png"
+        comparison_path = output_dir / "lr_frames_comparison.png"
         plt.savefig(comparison_path, dpi=150, bbox_inches='tight')
         print(f"   Saved comparison: {comparison_path}")
+        plt.show()
+        
+        # Create difference map visualization
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        for i in range(3):
+            diff = np.abs(lr_frames[i].astype(np.float64) - lr_frames[i+1].astype(np.float64))
+            axes[i].imshow(diff, cmap='RdBu_r', vmin=0, vmax=diff.max())
+            axes[i].set_title(f'LR{i} vs LR{i+1} Difference\nMean: {diff.mean():.6f}', fontweight='bold')
+            axes[i].axis('off')
+        
+        plt.suptitle('Inter-frame Differences', fontsize=14, fontweight='bold')
+        plt.tight_layout()
+        
+        diff_path = output_dir / "frame_differences.png"
+        plt.savefig(diff_path, dpi=150, bbox_inches='tight')
+        print(f"   Saved differences: {diff_path}")
         plt.show()
         
         print("\n" + "="*60)
@@ -226,10 +226,13 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         print("="*60)
         print(f"\nOutput files saved to: {output_dir.absolute()}")
         print(f"  - hr_image.npy")
-        print(f"  - lr1_image.npy")
-        print(f"  - lr2_image.npy")
+        print(f"  - lr0_image.npy (shift: {pipeline.shift_values[0]})")
+        print(f"  - lr1_image.npy (shift: {pipeline.shift_values[1]})")
+        print(f"  - lr2_image.npy (shift: {pipeline.shift_values[2]})")
+        print(f"  - lr3_image.npy (shift: {pipeline.shift_values[3]})")
         print(f"  - degradation_results.png")
-        print(f"  - lr1_lr2_comparison.png")
+        print(f"  - lr_frames_comparison.png")
+        print(f"  - frame_differences.png")
         
         return True
         

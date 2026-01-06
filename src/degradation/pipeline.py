@@ -2,12 +2,15 @@
 Main degradation pipeline implementing the observation model:
 y_k = D * B_k * M_k * x + n_k
 
-This pipeline generates two LR images (LR1, LR2) from one HR image,
-simulating the P1 and P2 satellite sensors with (0.5, 0.5) pixel offset.
+This pipeline generates 4 LR images from one HR image with deterministic sub-pixel shifts:
+- Frame 0: (0.0, 0.0) - reference
+- Frame 1: (0.25, 0.25)
+- Frame 2: (0.5, 0.5)
+- Frame 3: (0.75, 0.75)
 """
 
 import numpy as np
-from typing import Tuple, Dict, Optional, Any
+from typing import Tuple, Dict, Optional, Any, List
 import logging
 from .operators import WarpingOperator, BlurOperator, DownsamplingOperator, NoiseOperator
 
@@ -17,7 +20,7 @@ class DegradationPipeline:
     Hardware-aware degradation pipeline for satellite sensor simulation.
     
     Implements the complete observation model to generate synthetic training data
-    for the ISRO Multi-Frame Super-Resolution project.
+    for the ISRO Multi-Frame Super-Resolution project with 4 LR frames.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -29,120 +32,121 @@ class DegradationPipeline:
         """
         self.config = config
         self.downsampling_factor = config.get('downsampling_factor', 4)
+        self.num_lr_frames = config.get('num_lr_frames', 4)
+        self.shift_values = config.get('shift_values', [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]])
         
-        # Initialize operators for LR1 (P1 sensor - reference frame)
-        self.warp_lr1 = WarpingOperator(
-            shift_x=0.0,  # No shift for reference frame
-            shift_y=0.0
-        )
+        # Initialize operators for each LR frame
+        self.warp_operators = []
+        self.blur_operators = []
+        self.noise_operators = []
         
-        # Pass full config to BlurOperator - it will read its own parameters
-        self.blur_lr1 = BlurOperator(config)
+        for i, (shift_lr_x, shift_lr_y) in enumerate(self.shift_values[:self.num_lr_frames]):
+            # Convert LR shift to HR shift
+            shift_hr_x = shift_lr_x * self.downsampling_factor
+            shift_hr_y = shift_lr_y * self.downsampling_factor
+            
+            # Warping operator with deterministic shift
+            warp_op = WarpingOperator(
+                shift_x=shift_hr_x,
+                shift_y=shift_hr_y,
+                stochastic=False
+            )
+            self.warp_operators.append(warp_op)
+            
+            # Blur operator (anisotropic Gaussian PSF) - shared parameters
+            blur_op = BlurOperator(config)
+            self.blur_operators.append(blur_op)
+            
+            # Noise operator - shared parameters
+            noise_op = NoiseOperator(config)
+            self.noise_operators.append(noise_op)
         
-        # Initialize operators for LR2 (P2 sensor - shifted frame)
-        # Use stochastic shift with Gaussian distribution
-        shift_mean = config.get('shift_mean', 0.5)  # Mean shift in LR pixels
-        shift_std = config.get('shift_std', 0.1)    # Std dev for shift jitter
-        
-        self.warp_lr2 = WarpingOperator(
-            shift_x=0.0,  # Not used in stochastic mode
-            shift_y=0.0,
-            stochastic=True,
-            shift_mean=shift_mean,
-            shift_std=shift_std
-        )
-        
-        # Pass full config to BlurOperator - it will read its own parameters
-        self.blur_lr2 = BlurOperator(config)
-        
-        # Pass full config to DownsamplingOperator
+        # Downsampling operator (shared across all frames)
         self.downsample = DownsamplingOperator(config)
-        
-        # Pass full config to NoiseOperators - they will read their own parameters
-        self.noise_lr1 = NoiseOperator(config)
-        self.noise_lr2 = NoiseOperator(config)
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
         
-    def generate_lr1(self, hr_image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+    def generate_lr_frame(self, hr_image: np.ndarray, frame_idx: int, seed: Optional[int] = None) -> np.ndarray:
         """
-        Generate LR1 (reference frame) from HR image.
+        Generate a single LR frame from HR image with specified shift.
         
-        CORRECT Physical Pipeline: 
-        x -> M_1 (warp) -> B_1 (blur) -> n_poisson (photon shot) -> D (downsample) -> n_gaussian (read noise) -> y_1
+        Physical Pipeline:
+        x -> M_k (warp) -> B_k (anisotropic PSF blur) -> D (downsample) -> n_k (Poisson+Gaussian+ADC) -> y_k
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
+            frame_idx: Frame index (0, 1, 2, or 3)
             seed: Random seed for noise reproducibility
             
         Returns:
-            LR1 image (H/factor, W/factor) or (H/factor, W/factor, C)
+            LR frame image (H/factor, W/factor) or (H/factor, W/factor, C)
         """
-        self.logger.debug("Generating LR1 (reference frame)")
+        shift_lr = self.shift_values[frame_idx]
+        self.logger.debug(f"Generating LR frame {frame_idx} with shift {shift_lr}")
         
-        # Step 1: Warping (M_1) - Identity operation
-        warped = self.warp_lr1.apply(hr_image, seed=seed, downsampling_factor=self.downsampling_factor)
+        # Step 1: Warping (M_k) - Deterministic sub-pixel shift
+        warped = self.warp_operators[frame_idx].apply(
+            hr_image, 
+            seed=seed, 
+            downsampling_factor=self.downsampling_factor
+        )
         
-        # Step 2: Blurring (B_1) - Optical + Motion blur
-        blurred = self.blur_lr1.apply(warped)
+        # Step 2: Anisotropic Gaussian PSF blur (B_k)
+        blurred = self.blur_operators[frame_idx].apply(warped)
         
-        # Step 3: Poisson noise (photon shot noise) - BEFORE downsampling (on HR)
-        poisson_noisy = self.noise_lr1.apply_poisson_only(blurred, seed=seed)
+        # Step 3: Downsampling with sensor PSF (D) - Spatial integration
+        downsampled = self.downsample.apply(blurred)
         
-        # Step 4: Downsampling with sensor PSF (D) - Spatial integration smooths noise
-        downsampled = self.downsample.apply(poisson_noisy)
+        # Step 4: Noise + ADC - AFTER downsampling (on LR)
+        # Applies: Poisson (photon shot) + Gaussian (read noise) + Quantization (ADC)
+        frame_seed = seed + frame_idx if seed is not None else None
+        lr_frame = self.noise_operators[frame_idx].apply_noise_and_quantization(
+            downsampled, 
+            seed=frame_seed
+        )
         
-        # Step 5: Gaussian noise (electronic read noise) - AFTER downsampling (on LR)
-        lr1 = self.noise_lr1.apply_gaussian_only(downsampled, seed=seed)
+        return lr_frame
+    
+    def generate_lr_frames(self, hr_image: np.ndarray, seed: Optional[int] = None) -> List[np.ndarray]:
+        """
+        Generate all 4 LR frames from HR image.
         
-        return lr1
+        Args:
+            hr_image: High-resolution input image (H, W) or (H, W, C)
+            seed: Random seed for reproducibility
+            
+        Returns:
+            List of 4 LR frames with sub-pixel shifts: [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
+        """
+        self.logger.info(f"Generating {self.num_lr_frames} LR frames from HR image of shape {hr_image.shape}")
+        
+        lr_frames = []
+        for i in range(self.num_lr_frames):
+            lr_frame = self.generate_lr_frame(hr_image, frame_idx=i, seed=seed)
+            lr_frames.append(lr_frame)
+        
+        return lr_frames
+    
+    # Backward compatibility methods
+    def generate_lr1(self, hr_image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
+        """Generate LR1 (frame 0 with shift 0,0). Kept for backward compatibility."""
+        return self.generate_lr_frame(hr_image, frame_idx=0, seed=seed)
     
     def generate_lr2(self, hr_image: np.ndarray, seed: Optional[int] = None) -> np.ndarray:
-        """
-        Generate LR2 (shifted frame) from HR image.
-        
-        CORRECT Physical Pipeline:
-        x -> M_2 (warp+shift) -> B_2 (blur) -> n_poisson (photon shot) -> D (downsample) -> n_gaussian (read noise) -> y_2
-        
-        Args:
-            hr_image: High-resolution input image (H, W) or (H, W, C)
-            seed: Random seed for noise reproducibility
-            
-        Returns:
-            LR2 image (H/factor, W/factor) or (H/factor, W/factor, C)
-        """
-        self.logger.debug("Generating LR2 (shifted frame with stochastic shift)")
-        
-        # Step 1: Warping (M_2) - Stochastic sub-pixel shift from Gaussian distribution
-        warped = self.warp_lr2.apply(hr_image, seed=seed, downsampling_factor=self.downsampling_factor)
-        
-        # Step 2: Blurring (B_2) - Optical + Motion blur
-        blurred = self.blur_lr2.apply(warped)
-        
-        # Step 3: Poisson noise (photon shot noise) - BEFORE downsampling (on HR)
-        # Use different seed for independent noise realization
-        poisson_seed = seed + 1 if seed is not None else None
-        poisson_noisy = self.noise_lr2.apply_poisson_only(blurred, seed=poisson_seed)
-        
-        # Step 4: Downsampling with sensor PSF (D) - Spatial integration smooths noise
-        downsampled = self.downsample.apply(poisson_noisy)
-        
-        # Step 5: Gaussian noise (electronic read noise) - AFTER downsampling (on LR)
-        lr2 = self.noise_lr2.apply_gaussian_only(downsampled, seed=poisson_seed)
-        
-        return lr2
+        """Generate LR2 (frame 2 with shift 0.5,0.5). Kept for backward compatibility."""
+        return self.generate_lr_frame(hr_image, frame_idx=2, seed=seed)
     
-    def process_image(self, hr_image: np.ndarray, seed: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray]:
+    def process_image(self, hr_image: np.ndarray, seed: Optional[int] = None) -> List[np.ndarray]:
         """
-        Process a single HR image to generate both LR1 and LR2.
+        Process a single HR image to generate all 4 LR frames.
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
             seed: Random seed for reproducible results
             
         Returns:
-            Tuple of (LR1, LR2) images
+            List of 4 LR frames with shifts: [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
         """
         self.logger.info(f"Processing HR image of shape {hr_image.shape}")
         
@@ -150,13 +154,12 @@ class DegradationPipeline:
         if len(hr_image.shape) not in [2, 3]:
             raise ValueError(f"Input image must be 2D or 3D, got shape {hr_image.shape}")
         
-        # Generate both LR images
-        lr1 = self.generate_lr1(hr_image, seed=seed)
-        lr2 = self.generate_lr2(hr_image, seed=seed)
+        # Generate all 4 LR frames
+        lr_frames = self.generate_lr_frames(hr_image, seed=seed)
         
-        self.logger.info(f"Generated LR1: {lr1.shape}, LR2: {lr2.shape}")
+        self.logger.info(f"Generated {len(lr_frames)} LR frames, each with shape: {lr_frames[0].shape}")
         
-        return lr1, lr2
+        return lr_frames
     
     def get_config(self) -> Dict[str, Any]:
         """Get current pipeline configuration."""
