@@ -32,8 +32,23 @@ class DegradationPipeline:
         """
         self.config = config
         self.downsampling_factor = config.get('downsampling_factor', 4)
-        self.num_lr_frames = config.get('num_lr_frames', 4)
-        self.shift_values = config.get('shift_values', [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]])
+        self.downsampling_mode = config.get('downsampling_mode', 4)
+        
+        # Set shift values and num_lr_frames based on downsampling_mode
+        if self.downsampling_mode == 2:
+            self.shift_values = [[0.0, 0.0], [0.5, 0.5]]
+            self.num_lr_frames = 2
+        elif self.downsampling_mode == 4:
+            self.shift_values = [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]
+            self.num_lr_frames = 4
+        else:
+            raise ValueError(f"downsampling_mode must be 2 or 4, got {self.downsampling_mode}")
+        
+        # Allow config override of shift_values if explicitly provided
+        if 'shift_values' in config:
+            self.shift_values = config['shift_values']
+        if 'num_lr_frames' in config:
+            self.num_lr_frames = config['num_lr_frames']
         
         # Initialize operators for each LR frame
         self.warp_operators = []
@@ -110,14 +125,16 @@ class DegradationPipeline:
     
     def generate_lr_frames(self, hr_image: np.ndarray, seed: Optional[int] = None) -> List[np.ndarray]:
         """
-        Generate all 4 LR frames from HR image.
+        Generate LR frames from HR image based on downsampling_mode.
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
             seed: Random seed for reproducibility
             
         Returns:
-            List of 4 LR frames with sub-pixel shifts: [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
+            List of LR frames with sub-pixel shifts:
+            - Mode 2: 2 frames [(0,0), (0.5,0.5)]
+            - Mode 4: 4 frames [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
         """
         self.logger.info(f"Generating {self.num_lr_frames} LR frames from HR image of shape {hr_image.shape}")
         
@@ -139,14 +156,16 @@ class DegradationPipeline:
     
     def process_image(self, hr_image: np.ndarray, seed: Optional[int] = None) -> List[np.ndarray]:
         """
-        Process a single HR image to generate all 4 LR frames.
+        Process a single HR image to generate LR frames based on downsampling_mode.
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)
             seed: Random seed for reproducible results
             
         Returns:
-            List of 4 LR frames with shifts: [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
+            List of LR frames with shifts:
+            - Mode 2: 2 frames [(0,0), (0.5,0.5)]
+            - Mode 4: 4 frames [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
         """
         self.logger.info(f"Processing HR image of shape {hr_image.shape}")
         

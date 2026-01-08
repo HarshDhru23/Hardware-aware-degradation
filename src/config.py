@@ -13,7 +13,7 @@ import sys
 
 # Add src to path for imports
 if __name__ != '__main__':
-    from utils.validation import validate_config
+    from .utils.validation import validate_config
 else:
     from .utils.validation import validate_config
 

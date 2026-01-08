@@ -134,6 +134,12 @@ def validate_config(config: Dict[str, Any]) -> bool:
     if not isinstance(factor, int) or factor < 2:
         raise ValueError(f"downsampling_factor must be integer >= 2, got {factor}")
     
+    # Downsampling mode validation
+    if 'downsampling_mode' in config:
+        mode = config['downsampling_mode']
+        if mode not in [2, 4]:
+            raise ValueError(f"downsampling_mode must be 2 or 4, got {mode}")
+    
     # Patch size compatibility
     if 'hr_patch_size' in config and 'lr_patch_size' in config:
         hr_size = config['hr_patch_size']

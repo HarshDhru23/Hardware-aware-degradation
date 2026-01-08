@@ -2,12 +2,14 @@
 # ISRO Multi-Frame Super-Resolution (MFSR) Project
 
 # Core pipeline parameters
-downsampling_factor: 4  # 4x super-resolution factor (range: 2-8)
+downsampling_factor: 2  # 2x super-resolution factor (range: 2-8)
+downsampling_mode: 2   # Mode for LR frame generation: 2 or 4
+                       # Mode 2: Generate 2 LR frames [(0,0), (0.5,0.5)]
+                       # Mode 4: Generate 4 LR frames [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
 
-# Multi-frame configuration (4 LR frames for 4x downsampling)
-num_lr_frames: 4       # Number of LR frames to generate
+# Multi-frame configuration - automatically set by downsampling_mode
+# num_lr_frames and shift_values are determined by downsampling_mode
 shift_mode: 'deterministic'  # 'deterministic' or 'stochastic'
-shift_values: [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]  # Sub-pixel shifts (LR pixels)
 
 # Anisotropic Gaussian PSF blur parameters
 # Models satellite sensor PSF as anisotropic 2D Gaussian
@@ -39,7 +41,7 @@ target_dtype: "float32"  # Target data type: float32, float64, uint8, uint16
 
 # Patch extraction parameters
 hr_patch_size: 256     # HR patch size (range: 64-1024)
-lr_patch_size: 64      # LR patch size (range:python test.py --create-sample 16-256)
+lr_patch_size: 128     # LR patch size (range: 16-256) - must be hr_patch_size/downsampling_factor
 patch_stride: 256      # Stride for patch extraction (default: hr_patch_size)
 min_valid_pixels: 0.95 # Minimum fraction of valid pixels in patch (range: 0.5-1.0)
 

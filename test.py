@@ -17,12 +17,12 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # Add src to path for imports
-sys.path.append(str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from degradation import DegradationPipeline
-from config import ConfigManager
-from utils.data_io import GeoTIFFLoader
-from utils.visualization import visualize_degradation_results
+from src.degradation import DegradationPipeline
+from src.config import ConfigManager
+from src.utils.data_io import GeoTIFFLoader
+from src.utils.visualization import visualize_degradation_results
 
 
 def create_sample_image(output_path: str = "sample_test_image.tif", size: int = 512):
@@ -132,8 +132,9 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
             hr_image = hr_image[:new_h, :new_w]
             print(f"   New HR image shape: {hr_image.shape}")
         
-        # 4. Generate all 4 LR frames
-        print(f"\n4. Generating 4 LR frames (seed={seed})...")
+        # 4. Generate LR frames based on downsampling_mode
+        num_frames = pipeline.num_lr_frames
+        print(f"\n4. Generating {num_frames} LR frames (seed={seed})...")
         lr_frames = pipeline.process_image(hr_image, seed=seed)
         print(f"   Generated {len(lr_frames)} LR frames")
         for i, lr in enumerate(lr_frames):
@@ -151,32 +152,45 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         np.save(output_dir / "hr_image.npy", hr_image)
         for i, lr in enumerate(lr_frames):
             np.save(output_dir / f"lr{i}_image.npy", lr)
-        print(f"   Saved numpy arrays: hr_image.npy, lr0_image.npy, lr1_image.npy, lr2_image.npy, lr3_image.npy")
+        lr_files = ", ".join([f"lr{i}_image.npy" for i in range(len(lr_frames))])
+        print(f"   Saved numpy arrays: hr_image.npy, {lr_files}")
         
         # 6. Visualize results
         print("\n6. Creating visualization...")
         
-        # Main visualization - HR + 4 LR frames
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        # Main visualization - HR + LR frames (dynamic layout)
+        num_frames = len(lr_frames)
+        if num_frames == 2:
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            axes[0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
+            axes[0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
+            axes[0].axis('off')
+            
+            for i in range(num_frames):
+                lr = lr_frames[i]
+                shift = pipeline.shift_values[i]
+                axes[i+1].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+                axes[i+1].set_title(f'LR{i} (shift={shift})\nShape: {lr.shape}', fontsize=12, fontweight='bold')
+                axes[i+1].axis('off')
+            
+            plt.suptitle(f'Hardware-aware Degradation Pipeline - {num_frames} LR Frames', fontsize=14, fontweight='bold')
+        else:  # 4 frames
+            fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+            axes[0, 0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
+            axes[0, 0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
+            axes[0, 0].axis('off')
+            
+            positions = [(0, 1), (0, 2), (1, 1), (1, 2)]
+            for i, (row, col) in enumerate(positions):
+                lr = lr_frames[i]
+                shift = pipeline.shift_values[i]
+                axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+                axes[row, col].set_title(f'LR{i} (shift={shift})\nShape: {lr.shape}', fontsize=12, fontweight='bold')
+                axes[row, col].axis('off')
+            
+            axes[1, 0].axis('off')
+            plt.suptitle(f'Hardware-aware Degradation Pipeline - {num_frames} LR Frames', fontsize=14, fontweight='bold')
         
-        # HR image (spans first column)
-        axes[0, 0].imshow(hr_image, cmap='gray', vmin=np.percentile(hr_image, 2), vmax=np.percentile(hr_image, 98))
-        axes[0, 0].set_title(f'HR Image\nShape: {hr_image.shape}', fontsize=12, fontweight='bold')
-        axes[0, 0].axis('off')
-        
-        # LR frames with their shift values
-        positions = [(0, 1), (0, 2), (1, 1), (1, 2)]
-        for i, (row, col) in enumerate(positions):
-            lr = lr_frames[i]
-            shift = pipeline.shift_values[i]
-            axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
-            axes[row, col].set_title(f'LR{i} (shift={shift})\nShape: {lr.shape}', fontsize=12, fontweight='bold')
-            axes[row, col].axis('off')
-        
-        # Hide the bottom-left subplot
-        axes[1, 0].axis('off')
-        
-        plt.suptitle('Hardware-aware Degradation Pipeline - 4 LR Frames', fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         output_path = output_dir / "degradation_results.png"
@@ -184,19 +198,28 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         print(f"   Saved visualization: {output_path}")
         plt.show()
         
-        # Create detailed comparison - show all 4 LR frames in grid
-        fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+        # Create detailed comparison - show all LR frames in grid
+        num_frames = len(lr_frames)
+        if num_frames == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+            for i in range(num_frames):
+                lr = lr_frames[i]
+                shift = pipeline.shift_values[i]
+                axes[i].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+                axes[i].set_title(f'LR{i} (shift={shift})', fontweight='bold')
+                axes[i].axis('off')
+        else:  # 4 frames
+            fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+            for i in range(num_frames):
+                row = i // 2
+                col = i % 2
+                lr = lr_frames[i]
+                shift = pipeline.shift_values[i]
+                axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
+                axes[row, col].set_title(f'LR{i} (shift={shift})', fontweight='bold')
+                axes[row, col].axis('off')
         
-        for i in range(4):
-            row = i // 2
-            col = i % 2
-            lr = lr_frames[i]
-            shift = pipeline.shift_values[i]
-            axes[row, col].imshow(lr, cmap='gray', vmin=np.percentile(lr, 2), vmax=np.percentile(lr, 98))
-            axes[row, col].set_title(f'LR{i} (shift={shift})', fontweight='bold')
-            axes[row, col].axis('off')
-        
-        plt.suptitle('All 4 LR Frames Comparison', fontsize=14, fontweight='bold')
+        plt.suptitle(f'All {num_frames} LR Frames Comparison', fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         comparison_path = output_dir / "lr_frames_comparison.png"
@@ -205,16 +228,20 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         plt.show()
         
         # Create difference map visualization
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        
-        for i in range(3):
-            diff = np.abs(lr_frames[i].astype(np.float64) - lr_frames[i+1].astype(np.float64))
-            axes[i].imshow(diff, cmap='RdBu_r', vmin=0, vmax=diff.max())
-            axes[i].set_title(f'LR{i} vs LR{i+1} Difference\nMean: {diff.mean():.6f}', fontweight='bold')
-            axes[i].axis('off')
-        
-        plt.suptitle('Inter-frame Differences', fontsize=14, fontweight='bold')
-        plt.tight_layout()
+        num_diffs = len(lr_frames) - 1
+        if num_diffs > 0:
+            fig, axes = plt.subplots(1, num_diffs, figsize=(5*num_diffs, 5))
+            if num_diffs == 1:
+                axes = [axes]  # Make it iterable for single subplot
+            
+            for i in range(num_diffs):
+                diff = np.abs(lr_frames[i].astype(np.float64) - lr_frames[i+1].astype(np.float64))
+                axes[i].imshow(diff, cmap='RdBu_r', vmin=0, vmax=diff.max())
+                axes[i].set_title(f'LR{i} vs LR{i+1} Difference\nMean: {diff.mean():.6f}', fontweight='bold')
+                axes[i].axis('off')
+            
+            plt.suptitle('Inter-frame Differences', fontsize=14, fontweight='bold')
+            plt.tight_layout()
         
         diff_path = output_dir / "frame_differences.png"
         plt.savefig(diff_path, dpi=150, bbox_inches='tight')
@@ -226,10 +253,8 @@ def test_pipeline(image_path: str, config_path: str = "configs/default_config.ya
         print("="*60)
         print(f"\nOutput files saved to: {output_dir.absolute()}")
         print(f"  - hr_image.npy")
-        print(f"  - lr0_image.npy (shift: {pipeline.shift_values[0]})")
-        print(f"  - lr1_image.npy (shift: {pipeline.shift_values[1]})")
-        print(f"  - lr2_image.npy (shift: {pipeline.shift_values[2]})")
-        print(f"  - lr3_image.npy (shift: {pipeline.shift_values[3]})")
+        for i in range(len(lr_frames)):
+            print(f"  - lr{i}_image.npy (shift: {pipeline.shift_values[i]})")
         print(f"  - degradation_results.png")
         print(f"  - lr_frames_comparison.png")
         print(f"  - frame_differences.png")
