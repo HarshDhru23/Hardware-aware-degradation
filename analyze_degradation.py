@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Comprehensive degradation analysis script.
+Step-by-step Degradation Analysis Script
 
-This script performs detailed analysis of the degradation pipeline including:
-- HR/LR1/LR2 comparison with zoom regions
-- Noise characterization and SNR analysis
-- Blur analysis with edge preservation metrics
-- Step-by-step intermediate visualization
+This script visualizes each step of the degradation pipeline:
+1. Original HR Image
+2. After Warping (geometric shift)
+3. After Blur (PSF convolution)
+4. After Downsampling (spatial integration)
+5. After Noise (Poisson + Gaussian + ADC)
 
 Usage:
-    python analyze_degradation.py --image path/to/image.tif
-    python analyze_degradation.py --create-sample  # Test with synthetic image
-    python analyze_degradation.py --config configs/custom_config.yaml
+    python analyze_degradation.py --image path/to/image.tiff
 """
 
 import argparse
@@ -19,465 +18,375 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-import logging
 
 # Add src to path for imports
-sys.path.append(str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
 
-from degradation import DegradationPipeline
-from config import ConfigManager
-from utils.data_io import GeoTIFFLoader
-from utils.visualization import (
-    visualize_degradation_results,
-    plot_degradation_comparison,
-    plot_noise_analysis,
-    plot_blur_analysis
-)
+from src.degradation.operators import WarpingOperator, BlurOperator, DownsamplingOperator, NoiseOperator
+from src.config import ConfigManager
+from src.utils.data_io import GeoTIFFLoader
 
 
-def setup_logging(verbose: bool = True):
-    """Setup logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-
-def create_sample_image(size: int = 512) -> np.ndarray:
+def visualize_step(image, title, ax, percentile_clip=True):
     """
-    Create a sample test image with various patterns.
+    Visualize a single step image.
     
     Args:
-        size: Image size (default: 512x512)
-        
-    Returns:
-        Normalized test image in [0, 1] range
+        image: Image array
+        title: Title for the plot
+        ax: Matplotlib axis
+        percentile_clip: Whether to clip to 2-98 percentile for better visualization
     """
-    print(f"Creating sample test image ({size}x{size})...")
-    
-    y, x = np.ogrid[:size, :size]
-    
-    # Combine multiple patterns
-    image = np.zeros((size, size), dtype=np.float32)
-    
-    # Sinusoidal patterns
-    image += 0.3 * np.sin(2 * np.pi * x / 64) * np.cos(2 * np.pi * y / 64)
-    image += 0.2 * np.sin(2 * np.pi * x / 32)
-    image += 0.15 * np.cos(2 * np.pi * y / 48)
-    
-    # Geometric shapes
-    # Center square
-    center = size // 2
-    square_size = size // 6
-    image[center-square_size:center+square_size, 
-          center-square_size:center+square_size] += 0.4
-    
-    # Circle
-    circle_radius = size // 8
-    circle_x, circle_y = size // 4, size // 4
-    dist = np.sqrt((x - circle_x)**2 + (y - circle_y)**2)
-    image[dist < circle_radius] += 0.35
-    
-    # Diagonal lines
-    for offset in range(-size//2, size//2, size//10):
-        mask = np.abs(y - x - offset) < 2
-        image[mask] += 0.25
-    
-    # Edge patterns (high frequency)
-    edge_region = (x > size//4) & (x < size*3//4) & (y > size*3//4)
-    image[edge_region] += 0.2 * np.sin(4 * np.pi * x[edge_region] / size)
-    
-    # Normalize to [0, 1]
-    image = (image - image.min()) / (image.max() - image.min())
-    
-    print(f"   Sample image created: shape={image.shape}, range=[{image.min():.3f}, {image.max():.3f}]")
-    return image
-
-
-def extract_center_patch(image: np.ndarray, patch_size: int) -> np.ndarray:
-    """
-    Extract a center patch from image for detailed analysis.
-    
-    Args:
-        image: Input image (H, W) or (H, W, C)
-        patch_size: Size of square patch to extract
-        
-    Returns:
-        Center patch of size (patch_size, patch_size)
-    """
-    h, w = image.shape[:2]
-    center_y, center_x = h // 2, w // 2
-    half_size = patch_size // 2
-    
-    y1 = max(0, center_y - half_size)
-    y2 = min(h, center_y + half_size)
-    x1 = max(0, center_x - half_size)
-    x2 = min(w, center_x + half_size)
-    
-    if len(image.shape) == 2:
-        return image[y1:y2, x1:x2]
+    if percentile_clip:
+        vmin, vmax = np.percentile(image, 2), np.percentile(image, 98)
     else:
-        return image[y1:y2, x1:x2, :]
+        vmin, vmax = image.min(), image.max()
+    
+    ax.imshow(image, cmap='gray', vmin=vmin, vmax=vmax)
+    ax.set_title(title, fontsize=10, fontweight='bold')
+    ax.axis('off')
+    
+    # Add shape and range info
+    info_text = f'Shape: {image.shape}\nRange: [{image.min():.3f}, {image.max():.3f}]'
+    ax.text(0.02, 0.98, info_text, transform=ax.transAxes, 
+            fontsize=8, verticalalignment='top', 
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
 
-def analyze_pipeline_step_by_step(pipeline: DegradationPipeline, 
-                                   hr_image: np.ndarray,
-                                   output_dir: Path,
-                                   seed: int = 42):
+def visualize_difference(img1, img2, title, ax):
     """
-    Perform step-by-step analysis of the degradation pipeline.
+    Visualize the difference between two images.
     
     Args:
-        pipeline: Degradation pipeline instance
-        hr_image: High-resolution input image
-        output_dir: Directory to save analysis results
+        img1: First image
+        img2: Second image
+        title: Title for the plot
+        ax: Matplotlib axis
+    """
+    # Compute absolute difference
+    diff = np.abs(img1.astype(np.float64) - img2.astype(np.float64))
+    
+    ax.imshow(diff, cmap='RdBu_r', vmin=0, vmax=diff.max())
+    ax.set_title(title, fontsize=10, fontweight='bold')
+    ax.axis('off')
+    
+    # Add statistics
+    stats_text = f'Mean: {diff.mean():.6f}\nMax: {diff.max():.6f}\nStd: {diff.std():.6f}'
+    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+            fontsize=8, verticalalignment='top', 
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+
+def analyze_degradation_pipeline(image_path, config_path="configs/default_config.yaml", 
+                                 output_dir="analysis_output", seed=42):
+    """
+    Analyze the degradation pipeline step by step.
+    
+    Args:
+        image_path: Path to input HR image
+        config_path: Path to configuration file
+        output_dir: Directory to save output visualizations
         seed: Random seed for reproducibility
     """
-    print("\n" + "="*70)
-    print("STEP-BY-STEP DEGRADATION ANALYSIS")
-    print("="*70)
+    print("\n" + "="*80)
+    print("STEP-BY-STEP DEGRADATION PIPELINE ANALYSIS")
+    print("="*80)
     
-    # Extract 256x256 HR patch for analysis
-    print("\nExtracting 256x256 center patch from HR image for analysis...")
-    hr_patch = extract_center_patch(hr_image, 256)
-    print(f"   HR patch shape: {hr_patch.shape}")
-    print(f"   HR patch range: [{hr_patch.min():.3f}, {hr_patch.max():.3f}]")
+    # Create output directory
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create intermediate outputs directory
-    intermediate_dir = output_dir / "intermediate"
-    intermediate_dir.mkdir(parents=True, exist_ok=True)
+    # 1. Load configuration
+    print(f"\n[CONFIG] Loading configuration from: {config_path}")
+    config = ConfigManager(config_path)
+    config_dict = config.get_all()
     
-    # ========== LR1 BRANCH ANALYSIS ==========
-    print("\n[LR1 Branch - Reference Frame]")
-    print("-" * 70)
+    print(f"  - Downsampling factor: {config.get('downsampling_factor')}")
+    print(f"  - Downsampling mode: {config.get('downsampling_mode')}")
+    print(f"  - PSF sigma_x: {config.get('psf_sigma_x')}")
+    print(f"  - PSF sigma_y: {config.get('psf_sigma_y')}")
+    print(f"  - Gaussian noise std: {config.get('gaussian_std')}")
+    print(f"  - Poisson noise enabled: {config.get('enable_poisson')}")
+    print(f"  - Photon gain: {config.get('photon_gain')}")
     
-    # Step 1: Warping (LR1 uses identity - no shift)
-    print("Step 1: Warping (identity - no shift)...")
-    hr_warped_lr1 = pipeline.warp_lr1.apply(hr_patch)
-    print(f"   Output shape: {hr_warped_lr1.shape}")
-    print(f"   Value range: [{hr_warped_lr1.min():.3f}, {hr_warped_lr1.max():.3f}]")
+    # 2. Initialize operators
+    print(f"\n[OPERATORS] Initializing degradation operators...")
+    warp_op = WarpingOperator(shift_x=0.0, shift_y=0.0, stochastic=False)  # LR0 has shift (0,0)
+    blur_op = BlurOperator(config_dict)
+    downsample_op = DownsamplingOperator(config_dict)
+    noise_op = NoiseOperator(config_dict)
     
-    # Step 2: Blurring
-    print("Step 2: Blurring (optical + motion)...")
-    hr_blurred_lr1 = pipeline.blur_lr1.apply(hr_warped_lr1)
-    print(f"   Output shape: {hr_blurred_lr1.shape}")
-    print(f"   Value range: [{hr_blurred_lr1.min():.3f}, {hr_blurred_lr1.max():.3f}]")
+    downsampling_factor = config.get('downsampling_factor')
+    print(f"  ✓ Warping operator (shift: [0.0, 0.0])")
+    print(f"  ✓ Blur operator (PSF)")
+    print(f"  ✓ Downsampling operator ({downsampling_factor}x)")
+    print(f"  ✓ Noise operator (Poisson + Gaussian + ADC)")
     
-    # Blur analysis
-    print("   Analyzing blur effects...")
-    plot_blur_analysis(
-        original=hr_warped_lr1,
-        blurred=hr_blurred_lr1,
-        title="LR1 Blur Analysis (256x256 HR)",
-        save_path=str(intermediate_dir / "lr1_blur_analysis.png")
-    )
-    print(f"   Saved: lr1_blur_analysis.png")
+    # 3. Load HR image
+    print(f"\n[STEP 0] Loading HR image: {image_path}")
+    loader = GeoTIFFLoader(normalize=True, target_dtype='float32')
+    hr_original = loader.load_image(image_path)
     
-    # Step 3: Poisson noise (on HR before downsampling)
-    print("Step 3: Adding Poisson noise (photon shot noise on HR)...")
-    hr_poisson_lr1 = pipeline.noise_lr1.apply_poisson_only(hr_blurred_lr1, seed=seed)
-    print(f"   Output shape: {hr_poisson_lr1.shape}")
-    print(f"   Value range: [{hr_poisson_lr1.min():.3f}, {hr_poisson_lr1.max():.3f}]")
+    # Crop to be divisible by downsampling factor
+    h, w = hr_original.shape[:2]
+    new_h = (h // downsampling_factor) * downsampling_factor
+    new_w = (w // downsampling_factor) * downsampling_factor
+    hr_original = hr_original[:new_h, :new_w]
     
-    # Poisson noise analysis
-    print("   Analyzing Poisson noise effects...")
-    plot_noise_analysis(
-        clean_image=hr_blurred_lr1,
-        noisy_image=hr_poisson_lr1,
-        title="LR1 Poisson Noise Analysis (256x256 HR)",
-        save_path=str(intermediate_dir / "lr1_poisson_analysis.png")
-    )
-    print(f"   Saved: lr1_poisson_analysis.png")
+    print(f"  - Shape: {hr_original.shape}")
+    print(f"  - Dtype: {hr_original.dtype}")
+    print(f"  - Range: [{hr_original.min():.3f}, {hr_original.max():.3f}]")
     
-    # Step 4: Downsampling
-    print("Step 4: Downsampling (sensor integration)...")
-    lr1_downsampled = pipeline.downsample.apply(hr_poisson_lr1)
-    print(f"   Output shape: {lr1_downsampled.shape}")
-    print(f"   Value range: [{lr1_downsampled.min():.3f}, {lr1_downsampled.max():.3f}]")
-    print(f"   Note: Downsampling smooths HR Poisson noise by factor of √16 = 4x")
+    # Store all intermediate steps
+    steps = []
+    step_names = []
     
-    # Step 5: Gaussian noise + quantization (on LR after downsampling)
-    print("Step 5: Adding Gaussian noise + 11-bit quantization (read noise on LR)...")
-    lr1_final = pipeline.noise_lr1.apply_gaussian_only(lr1_downsampled, seed=seed)
-    print(f"   Output shape: {lr1_final.shape}")
-    print(f"   Value range: [{lr1_final.min():.3f}, {lr1_final.max():.3f}]")
+    # Step 0: Original HR
+    steps.append(hr_original.copy())
+    step_names.append("Step 0: Original HR")
     
-    # Gaussian noise + quantization analysis (full LR image)
-    print("   Analyzing Gaussian noise + quantization on full LR...")
-    plot_noise_analysis(
-        clean_image=lr1_downsampled,
-        noisy_image=lr1_final,
-        title="LR1 Gaussian Noise + Quantization (64x64 LR)",
-        save_path=str(intermediate_dir / "lr1_gaussian_quantization_analysis.png")
-    )
-    print(f"   Saved: lr1_gaussian_quantization_analysis.png")
+    # 4. Apply Warping (M_k)
+    print(f"\n[STEP 1] Applying Warping (geometric shift [0.0, 0.0])...")
+    hr_warped = warp_op.apply(hr_original, seed=seed, downsampling_factor=downsampling_factor)
+    print(f"  - Output shape: {hr_warped.shape}")
+    print(f"  - Output range: [{hr_warped.min():.3f}, {hr_warped.max():.3f}]")
+    print(f"  - Difference from original: mean={np.abs(hr_original - hr_warped).mean():.6f}")
     
-    # ========== LR2 BRANCH ANALYSIS ==========
-    print("\n[LR2 Branch - Shifted Frame]")
-    print("-" * 70)
+    steps.append(hr_warped.copy())
+    step_names.append("Step 1: After Warping")
     
-    # Step 1: Warping (LR2 uses shift)
-    print("Step 1: Warping (with stochastic shift)...")
-    hr_warped_lr2 = pipeline.warp_lr2.apply(hr_patch)
-    print(f"   Output shape: {hr_warped_lr2.shape}")
-    print(f"   Value range: [{hr_warped_lr2.min():.3f}, {hr_warped_lr2.max():.3f}]")
+    # 5. Apply Blur (B_k)
+    print(f"\n[STEP 2] Applying PSF Blur (anisotropic Gaussian)...")
+    hr_blurred = blur_op.apply(hr_warped)
+    print(f"  - Output shape: {hr_blurred.shape}")
+    print(f"  - Output range: [{hr_blurred.min():.3f}, {hr_blurred.max():.3f}]")
+    print(f"  - Difference from warped: mean={np.abs(hr_warped - hr_blurred).mean():.6f}")
     
-    # Warp comparison
-    warp_diff = np.abs(hr_warped_lr1.astype(np.float64) - hr_warped_lr2.astype(np.float64))
-    print(f"   Warp difference: mean={warp_diff.mean():.6f}, max={warp_diff.max():.6f}")
+    steps.append(hr_blurred.copy())
+    step_names.append("Step 2: After Blur (PSF)")
     
-    # Step 2: Blurring
-    print("Step 2: Blurring (optical + motion)...")
-    hr_blurred_lr2 = pipeline.blur_lr2.apply(hr_warped_lr2)
-    print(f"   Output shape: {hr_blurred_lr2.shape}")
-    print(f"   Value range: [{hr_blurred_lr2.min():.3f}, {hr_blurred_lr2.max():.3f}]")
+    # 6. Apply Downsampling (D)
+    print(f"\n[STEP 3] Applying Downsampling ({downsampling_factor}x with average pooling)...")
+    lr_downsampled = downsample_op.apply(hr_blurred)
+    print(f"  - Output shape: {lr_downsampled.shape}")
+    print(f"  - Output range: [{lr_downsampled.min():.3f}, {lr_downsampled.max():.3f}]")
+    print(f"  - Downsampling ratio: {hr_blurred.shape[0]/lr_downsampled.shape[0]:.1f}x")
     
-    # Blur analysis
-    print("   Analyzing blur effects...")
-    plot_blur_analysis(
-        original=hr_warped_lr2,
-        blurred=hr_blurred_lr2,
-        title="LR2 Blur Analysis (256x256 HR)",
-        save_path=str(intermediate_dir / "lr2_blur_analysis.png")
-    )
-    print(f"   Saved: lr2_blur_analysis.png")
+    steps.append(lr_downsampled.copy())
+    step_names.append(f"Step 3: After Downsampling ({downsampling_factor}x)")
     
-    # Step 3: Poisson noise (on HR before downsampling)
-    print("Step 3: Adding Poisson noise (photon shot noise on HR)...")
-    hr_poisson_lr2 = pipeline.noise_lr2.apply_poisson_only(hr_blurred_lr2, seed=seed+1)
-    print(f"   Output shape: {hr_poisson_lr2.shape}")
-    print(f"   Value range: [{hr_poisson_lr2.min():.3f}, {hr_poisson_lr2.max():.3f}]")
+    # 7. Apply Noise (n_k)
+    print(f"\n[STEP 4] Applying Noise (Poisson + Gaussian + ADC quantization)...")
+    lr_final = noise_op.apply_noise_and_quantization(lr_downsampled, seed=seed)
+    print(f"  - Output shape: {lr_final.shape}")
+    print(f"  - Output range: [{lr_final.min():.3f}, {lr_final.max():.3f}]")
+    print(f"  - Difference from downsampled: mean={np.abs(lr_downsampled - lr_final).mean():.6f}")
     
-    # Poisson noise analysis
-    print("   Analyzing Poisson noise effects...")
-    plot_noise_analysis(
-        clean_image=hr_blurred_lr2,
-        noisy_image=hr_poisson_lr2,
-        title="LR2 Poisson Noise Analysis (256x256 HR)",
-        save_path=str(intermediate_dir / "lr2_poisson_analysis.png")
-    )
-    print(f"   Saved: lr2_poisson_analysis.png")
+    steps.append(lr_final.copy())
+    step_names.append("Step 4: After Noise (Final LR)")
     
-    # Step 4: Downsampling
-    print("Step 4: Downsampling (sensor integration)...")
-    lr2_downsampled = pipeline.downsample.apply(hr_poisson_lr2)
-    print(f"   Output shape: {lr2_downsampled.shape}")
-    print(f"   Value range: [{lr2_downsampled.min():.3f}, {lr2_downsampled.max():.3f}]")
-    print(f"   Note: Downsampling smooths HR Poisson noise by factor of √16 = 4x")
+    # 8. Save intermediate results
+    print(f"\n[SAVING] Saving intermediate results to: {output_dir}")
+    np.save(output_dir / "step0_hr_original.npy", steps[0])
+    np.save(output_dir / "step1_hr_warped.npy", steps[1])
+    np.save(output_dir / "step2_hr_blurred.npy", steps[2])
+    np.save(output_dir / "step3_lr_downsampled.npy", steps[3])
+    np.save(output_dir / "step4_lr_final.npy", steps[4])
+    print(f"  ✓ Saved 5 numpy arrays")
     
-    # Step 5: Gaussian noise + quantization (on LR after downsampling)
-    print("Step 5: Adding Gaussian noise + 11-bit quantization (read noise on LR)...")
-    lr2_final = pipeline.noise_lr2.apply_gaussian_only(lr2_downsampled, seed=seed+1)
-    print(f"   Output shape: {lr2_final.shape}")
-    print(f"   Value range: [{lr2_final.min():.3f}, {lr2_final.max():.3f}]")
+    # 9. Create comprehensive visualization
+    print(f"\n[VISUALIZATION] Creating step-by-step visualization...")
     
-    # Gaussian noise + quantization analysis (full LR image)
-    print("   Analyzing Gaussian noise + quantization on full LR...")
-    plot_noise_analysis(
-        clean_image=lr2_downsampled,
-        noisy_image=lr2_final,
-        title="LR2 Gaussian Noise + Quantization (64x64 LR)",
-        save_path=str(intermediate_dir / "lr2_gaussian_quantization_analysis.png")
-    )
-    print(f"   Saved: lr2_gaussian_quantization_analysis.png")
+    # Main figure: All steps in sequence
+    fig = plt.figure(figsize=(20, 12))
+    gs = fig.add_gridspec(3, 5, hspace=0.3, wspace=0.3)
     
-    # ========== FINAL COMPARISON ==========
-    print("\n[Final LR1 vs LR2 Comparison]")
-    print("-" * 70)
+    # Row 1: All 5 steps
+    print("  - Creating main pipeline visualization...")
+    for i in range(5):
+        ax = fig.add_subplot(gs[0, i])
+        visualize_step(steps[i], step_names[i], ax)
     
-    # Calculate differences
-    lr_diff = np.abs(lr1_final.astype(np.float64) - lr2_final.astype(np.float64))
-    print(f"LR1 vs LR2 difference: mean={lr_diff.mean():.6f}, max={lr_diff.max():.6f}")
+    # Row 2: Difference maps between consecutive steps
+    print("  - Creating difference maps...")
+    diff_titles = [
+        "Diff: Original → Warped",
+        "Diff: Warped → Blurred", 
+        "Diff: Blurred → Downsampled*",
+        "Diff: Downsampled → Noisy"
+    ]
     
-    # Overall visualization
-    print("\nGenerating comprehensive visualizations...")
+    # For steps 0-2 (HR images)
+    for i in range(2):  # Only compare steps 0-1 and 1-2 (both HR)
+        ax = fig.add_subplot(gs[1, i])
+        visualize_difference(steps[i], steps[i+1], diff_titles[i], ax)
     
-    # Basic 3-panel view
-    visualize_degradation_results(
-        hr_image=hr_patch,
-        lr1_image=lr1_final,
-        lr2_image=lr2_final,
-        title="Degradation Pipeline Results - Overview",
-        save_path=str(output_dir / "degradation_overview.png")
-    )
-    print(f"   Saved: degradation_overview.png")
+    # For step 2->3, we need to downsample step 2 for fair comparison
+    ax = fig.add_subplot(gs[1, 2])
+    hr_blurred_for_diff = steps[2]
+    lr_blurred_downsampled = downsample_op.apply(hr_blurred_for_diff)
+    visualize_difference(lr_blurred_downsampled, steps[3], diff_titles[2] + "\n(both at LR)", ax)
     
-    # Detailed comparison with zoom
-    # Select center region for zoom (on HR patch)
-    h, w = hr_patch.shape
-    zoom_size = min(h, w) // 4
-    center_y, center_x = h // 2, w // 2
-    zoom_region = (
-        center_y - zoom_size // 2,
-        center_x - zoom_size // 2,
-        center_y + zoom_size // 2,
-        center_x + zoom_size // 2
-    )
+    # For step 3->4 (LR images)
+    ax = fig.add_subplot(gs[1, 3])
+    visualize_difference(steps[3], steps[4], diff_titles[3], ax)
     
-    plot_degradation_comparison(
-        original=hr_patch,
-        degraded_images={'LR1 (Reference)': lr1_final, 'LR2 (Shifted)': lr2_final},
-        region=zoom_region,
-        save_path=str(output_dir / "degradation_comparison_zoom.png")
-    )
-    print(f"   Saved: degradation_comparison_zoom.png")
+    # Row 3: Zoomed comparison of HR original vs LR final
+    print("  - Creating zoomed comparison...")
     
-    return {
-        'hr': hr_patch,
-        'lr1': lr1_final,
-        'lr2': lr2_final,
-        'lr1_downsampled': lr1_downsampled,
-        'lr2_downsampled': lr2_downsampled,
-        'hr_blurred_lr1': hr_blurred_lr1,
-        'hr_blurred_lr2': hr_blurred_lr2,
-        'hr_poisson_lr1': hr_poisson_lr1,
-        'hr_poisson_lr2': hr_poisson_lr2
-    }
+    # Original HR - center crop
+    ax = fig.add_subplot(gs[2, 0:2])
+    h, w = steps[0].shape
+    crop_size = 128
+    start_h, start_w = h//2 - crop_size//2, w//2 - crop_size//2
+    hr_crop = steps[0][start_h:start_h+crop_size, start_w:start_w+crop_size]
+    visualize_step(hr_crop, "HR Original (center crop 128x128)", ax)
+    
+    # LR final - center crop
+    ax = fig.add_subplot(gs[2, 2:4])
+    h_lr, w_lr = steps[4].shape
+    crop_size_lr = crop_size // downsampling_factor
+    start_h_lr, start_w_lr = h_lr//2 - crop_size_lr//2, w_lr//2 - crop_size_lr//2
+    lr_crop = steps[4][start_h_lr:start_h_lr+crop_size_lr, start_w_lr:start_w_lr+crop_size_lr]
+    visualize_step(lr_crop, f"LR Final (center crop {crop_size_lr}x{crop_size_lr})", ax)
+    
+    # Statistics summary
+    ax = fig.add_subplot(gs[2, 4])
+    ax.axis('off')
+    summary_text = "PIPELINE STATISTICS\n" + "="*30 + "\n\n"
+    summary_text += f"Original HR:\n"
+    summary_text += f"  Shape: {steps[0].shape}\n"
+    summary_text += f"  Range: [{steps[0].min():.3f}, {steps[0].max():.3f}]\n\n"
+    summary_text += f"Final LR:\n"
+    summary_text += f"  Shape: {steps[4].shape}\n"
+    summary_text += f"  Range: [{steps[4].min():.3f}, {steps[4].max():.3f}]\n\n"
+    summary_text += f"Degradation Effects:\n"
+    summary_text += f"  Warping: {np.abs(steps[0]-steps[1]).mean():.6f}\n"
+    summary_text += f"  Blur: {np.abs(steps[1]-steps[2]).mean():.6f}\n"
+    summary_text += f"  Downsampling: {downsampling_factor}x reduction\n"
+    summary_text += f"  Noise: {np.abs(steps[3]-steps[4]).mean():.6f}\n"
+    ax.text(0.1, 0.9, summary_text, transform=ax.transAxes, 
+            fontsize=9, verticalalignment='top', family='monospace',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+    
+    plt.suptitle(f'Step-by-Step Degradation Pipeline Analysis (LR Frame 0)\nInput: {Path(image_path).name}', 
+                 fontsize=14, fontweight='bold')
+    
+    # Save main visualization
+    output_path = output_dir / "pipeline_analysis.png"
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"  ✓ Saved main visualization: {output_path}")
+    plt.show()
+    
+    # 10. Create individual step visualizations
+    print(f"\n  - Creating individual step visualizations...")
+    fig, axes = plt.subplots(1, 5, figsize=(25, 5))
+    
+    for i in range(5):
+        visualize_step(steps[i], step_names[i], axes[i])
+    
+    plt.suptitle('Individual Pipeline Steps', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    output_path = output_dir / "individual_steps.png"
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"  ✓ Saved individual steps: {output_path}")
+    plt.show()
+    
+    # 11. Create detailed difference analysis
+    print(f"\n  - Creating detailed difference analysis...")
+    fig, axes = plt.subplots(2, 2, figsize=(14, 14))
+    
+    # HR differences
+    visualize_difference(steps[0], steps[1], "Original → Warped", axes[0, 0])
+    visualize_difference(steps[1], steps[2], "Warped → Blurred", axes[0, 1])
+    
+    # LR differences
+    lr_blurred_for_comparison = downsample_op.apply(steps[2])
+    visualize_difference(lr_blurred_for_comparison, steps[3], "Blurred → Downsampled\n(comparison at LR resolution)", axes[1, 0])
+    visualize_difference(steps[3], steps[4], "Downsampled → Noisy", axes[1, 1])
+    
+    plt.suptitle('Difference Maps Between Pipeline Steps', fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    
+    output_path = output_dir / "difference_maps.png"
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    print(f"  ✓ Saved difference maps: {output_path}")
+    plt.show()
+    
+    # 12. Summary
+    print("\n" + "="*80)
+    print("ANALYSIS COMPLETE!")
+    print("="*80)
+    print(f"\nOutput files saved to: {output_dir.absolute()}")
+    print(f"  - step0_hr_original.npy")
+    print(f"  - step1_hr_warped.npy")
+    print(f"  - step2_hr_blurred.npy")
+    print(f"  - step3_lr_downsampled.npy")
+    print(f"  - step4_lr_final.npy")
+    print(f"  - pipeline_analysis.png (comprehensive visualization)")
+    print(f"  - individual_steps.png (all steps side by side)")
+    print(f"  - difference_maps.png (difference analysis)")
+    
+    print(f"\nPipeline Summary:")
+    print(f"  Original HR: {steps[0].shape} → Final LR: {steps[4].shape}")
+    print(f"  Downsampling: {downsampling_factor}x reduction")
+    print(f"  Total degradation effect: {np.abs(steps[0].mean() - steps[4].mean()):.6f}")
+    
+    return steps
 
 
 def main():
-    """Main analysis function."""
+    """Main function."""
     parser = argparse.ArgumentParser(
-        description="Comprehensive degradation pipeline analysis"
+        description="Analyze the degradation pipeline step-by-step with visualizations"
     )
     parser.add_argument(
-        '--image', '-i',
-        type=str,
-        help='Path to input GeoTIFF image'
+        '--image', 
+        type=str, 
+        required=True,
+        help='Path to input HR image (TIFF format)'
     )
     parser.add_argument(
-        '--create-sample',
-        action='store_true',
-        help='Create and analyze a synthetic test image'
-    )
-    parser.add_argument(
-        '--config', '-c',
-        type=str,
+        '--config', 
+        type=str, 
         default='configs/default_config.yaml',
         help='Path to configuration file (default: configs/default_config.yaml)'
     )
     parser.add_argument(
-        '--output', '-o',
-        type=str,
+        '--output', 
+        type=str, 
         default='analysis_output',
-        help='Output directory for analysis results (default: analysis_output)'
+        help='Output directory for visualizations (default: analysis_output)'
     )
     parser.add_argument(
-        '--seed',
-        type=int,
+        '--seed', 
+        type=int, 
         default=42,
         help='Random seed for reproducibility (default: 42)'
-    )
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging'
     )
     
     args = parser.parse_args()
     
-    # Setup logging
-    setup_logging(args.verbose)
+    # Check if image exists
+    if not Path(args.image).exists():
+        print(f"ERROR: Image file not found: {args.image}")
+        sys.exit(1)
     
-    print("="*70)
-    print("HARDWARE-AWARE DEGRADATION PIPELINE - COMPREHENSIVE ANALYSIS")
-    print("="*70)
-    
-    # Create output directory
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\nOutput directory: {output_dir.absolute()}")
-    
+    # Run analysis
     try:
-        # Load configuration
-        print(f"\n1. Loading configuration from: {args.config}")
-        config_manager = ConfigManager(args.config)
-        config = config_manager.config
-        print(f"   Configuration loaded successfully")
-        print(f"\n   Key Parameters:")
-        print(f"   - Downsampling factor: {config.get('downsampling_factor', 4)}")
-        print(f"   - Optical sigma: {config.get('optical_sigma', 0.8)}")
-        print(f"   - Motion kernel size: {config.get('motion_kernel_size', 3)}")
-        print(f"   - Shift mean: {config.get('shift_mean', 0.5)}")
-        print(f"   - Shift std: {config.get('shift_std', 0.1)}")
-        print(f"   - Gaussian noise std: {config.get('gaussian_std', 0.01)}")
-        print(f"   - Poisson noise enabled: {config.get('enable_poisson', False)}")
-        print(f"   - Photon gain: {config.get('photon_gain', 100.0)}")
-        print(f"   - Enable quantization: {config.get('enable_quantization', False)}")
-        print(f"   - Quantization bits: {config.get('quantization_bits', 8)}")
-        
-        # Initialize pipeline
-        print(f"\n2. Initializing degradation pipeline...")
-        pipeline = DegradationPipeline(config)
-        print(f"   Pipeline initialized successfully")
-        
-        # Load or create image
-        print(f"\n3. Loading input image...")
-        if args.create_sample:
-            print("   Creating synthetic test image...")
-            hr_image = create_sample_image(size=512)
-        elif args.image:
-            print(f"   Loading from: {args.image}")
-            loader = GeoTIFFLoader(normalize=True, target_dtype='float32')
-            hr_image = loader.load_image(args.image)
-            print(f"   Image loaded: shape={hr_image.shape}, dtype={hr_image.dtype}")
-            print(f"   Value range: [{hr_image.min():.3f}, {hr_image.max():.3f}]")
-        else:
-            print("\nERROR: Must specify --image or --create-sample")
-            parser.print_help()
-            return 1
-        
-        # Perform comprehensive analysis
-        print(f"\n4. Performing comprehensive analysis...")
-        results = analyze_pipeline_step_by_step(
-            pipeline=pipeline,
-            hr_image=hr_image,
-            output_dir=output_dir,
+        analyze_degradation_pipeline(
+            image_path=args.image,
+            config_path=args.config,
+            output_dir=args.output,
             seed=args.seed
         )
-        
-        # Save numpy arrays
-        print(f"\n5. Saving intermediate results...")
-        np.save(output_dir / "hr_image.npy", results['hr'])
-        np.save(output_dir / "lr1_final.npy", results['lr1'])
-        np.save(output_dir / "lr2_final.npy", results['lr2'])
-        np.save(output_dir / "lr1_downsampled.npy", results['lr1_downsampled'])
-        np.save(output_dir / "lr2_downsampled.npy", results['lr2_downsampled'])
-        np.save(output_dir / "hr_poisson_lr1.npy", results['hr_poisson_lr1'])
-        np.save(output_dir / "hr_poisson_lr2.npy", results['hr_poisson_lr2'])
-        print(f"   Saved numpy arrays to {output_dir}")
-        
-        # Print summary
-        print("\n" + "="*70)
-        print("ANALYSIS COMPLETE!")
-        print("="*70)
-        print(f"\nOutput files saved to: {output_dir.absolute()}")
-        print("\nGenerated files:")
-        print("  Main visualizations:")
-        print("    - degradation_overview.png")
-        print("    - degradation_comparison_zoom.png")
-        print("  Intermediate analysis (LR1):")
-        print("    - intermediate/lr1_blur_analysis.png")
-        print("    - intermediate/lr1_poisson_analysis.png")
-        print("    - intermediate/lr1_gaussian_quantization_analysis.png")
-        print("  Intermediate analysis (LR2):")
-        print("    - intermediate/lr2_blur_analysis.png")
-        print("    - intermediate/lr2_poisson_analysis.png")
-        print("    - intermediate/lr2_gaussian_quantization_analysis.png")
-        print("  Numpy arrays:")
-        print("    - hr_image.npy, lr1_final.npy, lr2_final.npy")
-        print("    - lr1_downsampled.npy, lr2_downsampled.npy")
-        print("    - hr_poisson_lr1.npy, hr_poisson_lr2.npy")
-        
-        return 0
-        
     except Exception as e:
         print(f"\nERROR: Analysis failed with exception: {e}")
         import traceback
         traceback.print_exc()
-        return 1
+        sys.exit(1)
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    main()
