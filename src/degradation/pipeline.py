@@ -2,11 +2,15 @@
 Main degradation pipeline implementing the observation model:
 y_k = D * B_k * M_k * x + n_k
 
-This pipeline generates 4 LR images from one HR image with deterministic sub-pixel shifts:
-- Frame 0: (0.0, 0.0) - reference
-- Frame 1: (0.25, 0.25)
-- Frame 2: (0.5, 0.5)
-- Frame 3: (0.75, 0.75)
+This pipeline supports both deterministic and stochastic sub-pixel shifts:
+
+Deterministic mode (shift_mode='deterministic'):
+- Mode 2: [(0.0, 0.0), (0.5, 0.5)]
+- Mode 4: [(0.0, 0.0), (0.25, 0.25), (0.5, 0.5), (0.75, 0.75)]
+
+Stochastic mode (shift_mode='stochastic'):
+- Shifts sampled from Gaussian distribution around nominal values
+- Variance: 0.01-0.15 for 2x, ~0.03 for 4x (to simulate sensor jitter)
 """
 
 import numpy as np
@@ -33,14 +37,17 @@ class DegradationPipeline:
         self.config = config
         self.downsampling_factor = config.get('downsampling_factor', 4)
         self.downsampling_mode = config.get('downsampling_mode', 4)
+        self.shift_mode = config.get('shift_mode', 'deterministic')
         
         # Set shift values and num_lr_frames based on downsampling_mode
         if self.downsampling_mode == 2:
             self.shift_values = [[0.0, 0.0], [0.5, 0.5]]
             self.num_lr_frames = 2
+            self.shift_variance = config.get('shift_variance_2x', 0.08)
         elif self.downsampling_mode == 4:
             self.shift_values = [[0.0, 0.0], [0.25, 0.25], [0.5, 0.5], [0.75, 0.75]]
             self.num_lr_frames = 4
+            self.shift_variance = config.get('shift_variance_4x', 0.03)
         else:
             raise ValueError(f"downsampling_mode must be 2 or 4, got {self.downsampling_mode}")
         
@@ -60,11 +67,15 @@ class DegradationPipeline:
             shift_hr_x = shift_lr_x * self.downsampling_factor
             shift_hr_y = shift_lr_y * self.downsampling_factor
             
-            # Warping operator with deterministic shift
+            # Warping operator with deterministic or stochastic shift
+            is_stochastic = (self.shift_mode == 'stochastic')
             warp_op = WarpingOperator(
                 shift_x=shift_hr_x,
                 shift_y=shift_hr_y,
-                stochastic=False
+                stochastic=is_stochastic,
+                shift_mean_x=shift_lr_x,  # Use nominal shift as mean
+                shift_mean_y=shift_lr_y,
+                shift_variance=self.shift_variance
             )
             self.warp_operators.append(warp_op)
             

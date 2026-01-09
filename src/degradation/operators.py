@@ -11,6 +11,16 @@ from typing import Tuple, Optional, Dict, Any
 from scipy import ndimage
 from scipy.ndimage import gaussian_filter
 import warnings
+import sys
+from pathlib import Path
+
+# Add src to path for imports
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Import bicubic interpolation with antialiasing
+from utils import bicubic_core
 
 
 class WarpingOperator:
@@ -24,22 +34,26 @@ class WarpingOperator:
     """
     
     def __init__(self, shift_x: float = 0.0, shift_y: float = 0.0, 
-                 stochastic: bool = False, shift_mean: float = 0.5, shift_std: float = 0.1):
+                 stochastic: bool = False, shift_mean_x: float = 0.0, shift_mean_y: float = 0.0,
+                 shift_variance: float = 0.08):
         """
         Initialize warping operator.
         
         Args:
             shift_x: Horizontal shift in HR pixels (deterministic mode)
             shift_y: Vertical shift in HR pixels (deterministic mode)
-            stochastic: If True, sample shifts from Gaussian distribution
-            shift_mean: Mean shift value for stochastic mode (in LR pixels)
-            shift_std: Std deviation for stochastic mode (in LR pixels)
+            stochastic: If True, sample shifts from Gaussian distribution around mean
+            shift_mean_x: Mean horizontal shift for stochastic mode (in LR pixels)
+            shift_mean_y: Mean vertical shift for stochastic mode (in LR pixels)
+            shift_variance: Variance for stochastic shifts (std = sqrt(variance))
+                          For 2x: 0.01-0.15, For 4x: ~0.03 (12% of nominal shift)
         """
-        self.shift_x = np.clip(shift_x, 0.0, 4.0)
-        self.shift_y = np.clip(shift_y, 0.0, 4.0)
+        self.shift_x = shift_x
+        self.shift_y = shift_y
         self.stochastic = stochastic
-        self.shift_mean = shift_mean
-        self.shift_std = shift_std
+        self.shift_mean_x = shift_mean_x
+        self.shift_mean_y = shift_mean_y
+        self.shift_std = np.sqrt(shift_variance)  # Convert variance to std deviation
         
     def apply(self, image: np.ndarray, seed: Optional[int] = None, downsampling_factor: int = 4) -> np.ndarray:
         """
@@ -55,17 +69,17 @@ class WarpingOperator:
         """
         # Determine actual shift values
         if self.stochastic:
-            # Sample from Gaussian distribution
+            # Sample from Gaussian distribution around nominal shift
             if seed is not None:
                 np.random.seed(seed)
-            # Sample shift in LR pixels, then convert to HR pixels
-            shift_x_lr = np.random.normal(self.shift_mean, self.shift_std)
-            shift_y_lr = np.random.normal(self.shift_mean, self.shift_std)
+            # Sample shift in LR pixels around the mean, then convert to HR pixels
+            shift_x_lr = np.random.normal(self.shift_mean_x, self.shift_std)
+            shift_y_lr = np.random.normal(self.shift_mean_y, self.shift_std)
             shift_x_hr = shift_x_lr * downsampling_factor
             shift_y_hr = shift_y_lr * downsampling_factor
             # Clip to reasonable range
-            shift_x_hr = np.clip(shift_x_hr, -4.0, 4.0)
-            shift_y_hr = np.clip(shift_y_hr, -4.0, 4.0)
+            shift_x_hr = np.clip(shift_x_hr, -4.0 * downsampling_factor, 4.0 * downsampling_factor)
+            shift_y_hr = np.clip(shift_y_hr, -4.0 * downsampling_factor, 4.0 * downsampling_factor)
         else:
             # Use deterministic shifts
             shift_x_hr = self.shift_x
@@ -198,11 +212,10 @@ class BlurOperator:
 
 class DownsamplingOperator:
     """
-    Downsampling operator D that combines sensor PSF and downsampling.
+    Downsampling operator D with bicubic anti-aliasing.
     
-    Uses average pooling with kernel_size=factor and stride=factor to simulate:
-    1. Sensor PSF (box filter averaging)
-    2. Downsampling (undersampling)
+    Uses bicubic interpolation with anti-aliasing to properly handle high-frequency content
+    and prevent aliasing artifacts during downsampling.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -220,7 +233,7 @@ class DownsamplingOperator:
     
     def apply(self, image: np.ndarray) -> np.ndarray:
         """
-        Apply downsampling with sensor PSF simulation.
+        Apply bicubic downsampling with anti-aliasing.
         
         Args:
             image: Input HR image (H, W) or (H, W, C)
@@ -228,33 +241,28 @@ class DownsamplingOperator:
         Returns:
             Downsampled LR image (H/factor, W/factor) or (H/factor, W/factor, C)
         """
+        # Calculate output shape
         if len(image.shape) == 2:
             h, w = image.shape
-            # Ensure dimensions are divisible by factor
-            h_new = (h // self.factor) * self.factor
-            w_new = (w // self.factor) * self.factor
-            image_cropped = image[:h_new, :w_new]
-            
-            # Apply average pooling
-            pooled = image_cropped.reshape(
-                h_new // self.factor, self.factor,
-                w_new // self.factor, self.factor
-            ).mean(axis=(1, 3))
-            
+            output_shape = (h // self.factor, w // self.factor)
         else:
             h, w, c = image.shape
-            # Ensure dimensions are divisible by factor
-            h_new = (h // self.factor) * self.factor
-            w_new = (w // self.factor) * self.factor
-            image_cropped = image[:h_new, :w_new, :]
-            
-            # Apply average pooling to each channel
-            pooled = image_cropped.reshape(
-                h_new // self.factor, self.factor,
-                w_new // self.factor, self.factor, c
-            ).mean(axis=(1, 3))
+            output_shape = (h // self.factor, w // self.factor)
         
-        return pooled
+        # Use bicubic interpolation with anti-aliasing
+        # scale_factor = 1 / downsampling_factor (e.g., 0.25 for 4x downsampling)
+        scale_factor = 1.0 / self.factor
+        
+        # Apply bicubic downsampling with anti-aliasing
+        downsampled = bicubic_core.imresize(
+            image, 
+            scale_factor=scale_factor,
+            output_shape=output_shape,
+            kernel='cubic',
+            antialiasing=True
+        )
+        
+        return downsampled
 
 
 class NoiseOperator:
