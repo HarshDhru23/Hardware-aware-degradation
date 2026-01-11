@@ -4,10 +4,11 @@ Compute global percentile statistics across an entire dataset in RAW 0-65535 ran
 
 This script:
 1. Loads images in RAW uint16 format (0-65535 range) WITHOUT normalization
-2. Filters out completely black patches (all pixels == 0)
-3. Computes histogram over 0-65535 range
-4. Saves histogram data (NPY) and visualization (PNG) for later combining
-5. Computes 2nd and 98th percentiles from filtered histogram
+2. Filters out completely black images (all pixels == 0)
+3. Filters out individual black pixels (pixel value == 0) from valid images
+4. Computes histogram over 0-65535 range using only non-zero pixels
+5. Saves histogram data (NPY) and visualization (PNG) for later combining
+6. Computes 2nd and 98th percentiles from filtered histogram
 
 Usage:
     python compute_global_stats.py --input-dir AOI_3_Paris_Train_SN2/PAN --output configs/stats_paris_sn2.yaml
@@ -38,7 +39,11 @@ def compute_global_percentiles(
     """
     Compute global percentiles across all images in RAW 0-65535 range.
     
-    Filters out completely black patches and computes statistics on remaining pixels.
+    Filters out:
+    1. Completely black images (all pixels == 0)
+    2. Individual black pixels (pixel value == 0) from valid images
+    
+    Only non-zero pixels are used for histogram and percentile computation.
     Saves histogram data as NPY file for later combining across multiple folders.
     
     Args:
@@ -60,7 +65,7 @@ def compute_global_percentiles(
     print(f"File pattern: {pattern}")
     print(f"Histogram bins: {bins} (0-65535 range)")
     print(f"Percentiles: {percentiles}")
-    print(f"Black patch filtering: ENABLED")
+    print(f"Black filtering: ENABLED (images + pixels with value=0)")
     print()
     
     # Find all image files
@@ -81,10 +86,11 @@ def compute_global_percentiles(
     bin_edges = np.linspace(0, 65535, bins + 1)
     
     print("Building cumulative histogram across all images...")
-    print("(Filtering out completely black patches)")
+    print("(Filtering out black patches AND black pixels)")
     total_pixels = 0
     total_black_patches = 0
     total_patches_processed = 0
+    total_black_pixels_filtered = 0
     
     # Process each image
     for img_path in tqdm(image_files, desc="Processing images"):
@@ -100,19 +106,32 @@ def compute_global_percentiles(
             
             total_patches_processed += 1
             
-            # Build histogram for this image (only non-black images)
-            h, _ = np.histogram(image.ravel(), bins=bin_edges)
+            # Filter out black pixels (value == 0) from this image
+            # Only include non-zero pixels in histogram
+            non_zero_pixels = image[image > 0]
+            
+            if non_zero_pixels.size == 0:
+                # Shouldn't happen after the all-zero check, but be safe
+                continue
+            
+            # Track how many black pixels we're filtering
+            num_black_pixels = image.size - non_zero_pixels.size
+            total_black_pixels_filtered += num_black_pixels
+            
+            # Build histogram ONLY from non-zero pixels
+            h, _ = np.histogram(non_zero_pixels, bins=bin_edges)
             hist += h
-            total_pixels += image.size
+            total_pixels += non_zero_pixels.size  # Count only non-zero pixels
             
         except Exception as e:
             print(f"\nWarning: Failed to process {img_path.name}: {e}")
             continue
     
     print(f"\nTotal patches processed: {total_patches_processed:,}")
-    print(f"Black patches filtered: {total_black_patches:,}")
+    print(f"Black patches filtered (entire image): {total_black_patches:,}")
     print(f"Valid patches used: {total_patches_processed - total_black_patches:,}")
-    print(f"Total pixels in histogram: {total_pixels:,}")
+    print(f"Black pixels filtered (value=0): {total_black_pixels_filtered:,}")
+    print(f"Non-zero pixels in histogram: {total_pixels:,}")
     print()
     
     if total_pixels == 0:
@@ -148,12 +167,13 @@ def compute_global_percentiles(
         'num_images_valid': total_patches_processed - total_black_patches,
         'num_images_black': total_black_patches,
         'total_pixels': int(total_pixels),
+        'total_black_pixels_filtered': int(total_black_pixels_filtered),
         'bins': bins,
         'range': [0, 65535],
         'normalization': 'none (raw uint16)',
         'loader': 'GeoTIFFLoader',
         'input_dir': str(input_dir.absolute()),
-        'black_filtering': True
+        'black_filtering': 'both images and pixels (value=0)'
     }
     
     # Save histogram data as NPZ for later combining
