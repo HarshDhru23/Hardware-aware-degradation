@@ -221,6 +221,11 @@ def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
     ax1.set_ylabel('Pixel Count', fontsize=12, fontweight='bold')
     ax1.set_title('Global Histogram - Linear Scale (0-65535 Range)', fontsize=14, fontweight='bold')
     ax1.set_xlim(0, 65535)
+    
+    # Set custom x-axis ticks for important bit-depth boundaries
+    custom_xticks = [0, 512, 1023, 2047, 4096, 8192, 16384, 32768, 65535]
+    ax1.set_xticks(custom_xticks)
+    ax1.set_xticklabels([f'{x:,}' for x in custom_xticks], rotation=45, ha='right')
     ax1.grid(True, alpha=0.3)
     
     # Add percentile lines
@@ -243,6 +248,10 @@ def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
     ax2.set_title('Global Histogram - Log Scale (0-65535 Range)', fontsize=14, fontweight='bold')
     ax2.set_xlim(0, 65535)
     ax2.set_yscale('log')
+    
+    # Set custom x-axis ticks for important bit-depth boundaries
+    ax2.set_xticks(custom_xticks)
+    ax2.set_xticklabels([f'{x:,}' for x in custom_xticks], rotation=45, ha='right')
     ax2.grid(True, alpha=0.3, which='both')
     
     # Add percentile lines
