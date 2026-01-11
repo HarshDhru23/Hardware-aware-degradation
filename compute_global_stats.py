@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Compute global percentile statistics across an entire dataset.
+Compute global percentile statistics across an entire dataset in RAW 0-65535 range.
 
-This script computes global 2nd and 98th percentiles across all images in a directory
-using the exact same loading method as the degradation pipeline (GeoTIFFLoader).
-Uses histogram-based method for memory efficiency on large datasets.
+This script:
+1. Loads images in RAW uint16 format (0-65535 range) WITHOUT normalization
+2. Filters out completely black patches (all pixels == 0)
+3. Computes histogram over 0-65535 range
+4. Saves histogram data (NPY) and visualization (PNG) for later combining
+5. Computes 2nd and 98th percentiles from filtered histogram
 
 Usage:
-    python compute_global_stats.py --input-dir AOI_3_Paris_Train_SN2/PAN --output global_stats_spacenet2.yaml
+    python compute_global_stats.py --input-dir AOI_3_Paris_Train_SN2/PAN --output configs/stats_paris_sn2.yaml
 """
 
 import numpy as np
@@ -29,31 +32,35 @@ def compute_global_percentiles(
     bins: int = 65536,
     pattern: str = "*.tif",
     save_histogram: bool = True,
-    histogram_output: Path = None
+    histogram_output: Path = None,
+    histogram_data_output: Path = None
 ):
     """
-    Compute global percentiles across all images in a directory using histogram method.
+    Compute global percentiles across all images in RAW 0-65535 range.
     
-    Uses the exact same GeoTIFFLoader as the degradation pipeline to ensure consistency.
+    Filters out completely black patches and computes statistics on remaining pixels.
+    Saves histogram data as NPY file for later combining across multiple folders.
     
     Args:
         input_dir: Directory containing images
         percentiles: List of percentiles to compute (e.g., [2, 98])
-        bins: Number of histogram bins (default: 65536 for high precision)
+        bins: Number of histogram bins (default: 65536 for full 16-bit precision)
         pattern: Glob pattern for image files
         save_histogram: Whether to save histogram visualization
         histogram_output: Path to save histogram image (default: same as yaml with .png)
+        histogram_data_output: Path to save histogram data (default: same as yaml with _hist.npz)
         
     Returns:
         Tuple of (statistics_dict, histogram, bin_edges)
     """
     print("="*70)
-    print("Computing Global Percentile Statistics")
+    print("Computing Global Percentile Statistics (RAW 0-65535 Range)")
     print("="*70)
     print(f"Input directory: {input_dir.absolute()}")
     print(f"File pattern: {pattern}")
-    print(f"Histogram bins: {bins}")
+    print(f"Histogram bins: {bins} (0-65535 range)")
     print(f"Percentiles: {percentiles}")
+    print(f"Black patch filtering: ENABLED")
     print()
     
     # Find all image files
@@ -65,24 +72,35 @@ def compute_global_percentiles(
     print(f"Found {len(image_files)} image files")
     print()
     
-    # Initialize GeoTIFFLoader with the exact same settings as pipeline
-    loader = GeoTIFFLoader(normalize=True, target_dtype='float32')
+    # Initialize GeoTIFFLoader WITHOUT normalization to get raw uint16 values
+    loader = GeoTIFFLoader(normalize=False, target_dtype='uint16')
     
     # Initialize histogram
-    # Range [0, 1] because loader normalizes by dividing by 2047
+    # Range [0, 65535] for full 16-bit range
     hist = np.zeros(bins, dtype=np.int64)
-    bin_edges = np.linspace(0.0, 1.0, bins + 1)
+    bin_edges = np.linspace(0, 65535, bins + 1)
     
     print("Building cumulative histogram across all images...")
+    print("(Filtering out completely black patches)")
     total_pixels = 0
+    total_black_patches = 0
+    total_patches_processed = 0
     
     # Process each image
     for img_path in tqdm(image_files, desc="Processing images"):
         try:
-            # Load image using exact same method as pipeline
+            # Load image in RAW uint16 format (0-65535)
             image = loader.load_image(img_path)
             
-            # Build histogram for this image
+            # Check if completely black (all pixels == 0)
+            if np.all(image == 0):
+                total_black_patches += 1
+                total_patches_processed += 1
+                continue  # Skip completely black patches
+            
+            total_patches_processed += 1
+            
+            # Build histogram for this image (only non-black images)
             h, _ = np.histogram(image.ravel(), bins=bin_edges)
             hist += h
             total_pixels += image.size
@@ -91,8 +109,14 @@ def compute_global_percentiles(
             print(f"\nWarning: Failed to process {img_path.name}: {e}")
             continue
     
-    print(f"\nTotal pixels processed: {total_pixels:,}")
+    print(f"\nTotal patches processed: {total_patches_processed:,}")
+    print(f"Black patches filtered: {total_black_patches:,}")
+    print(f"Valid patches used: {total_patches_processed - total_black_patches:,}")
+    print(f"Total pixels in histogram: {total_pixels:,}")
     print()
+    
+    if total_pixels == 0:
+        raise ValueError("No valid pixels found after filtering black patches!")
     
     # Compute percentiles from cumulative histogram
     print("Computing percentiles from histogram...")
@@ -110,17 +134,39 @@ def compute_global_percentiles(
         percentile_value = bin_edges[bin_idx]
         
         results[f'p{p}'] = float(percentile_value)
-        print(f"  {p}th percentile: {percentile_value:.6f}")
+        print(f"  {p}th percentile: {percentile_value:.1f} (raw 16-bit value)")
+    
+    # Compute suggested normalization factor (98th percentile)
+    suggested_norm = results.get('p98', 65535)
+    results['suggested_normalization_factor'] = float(suggested_norm)
+    print(f"\nSuggested normalization factor: {suggested_norm:.1f}")
+    print(f"  (divide images by this value to map to [0, 1])")
     
     # Add metadata
     results['metadata'] = {
-        'num_images': len(image_files),
+        'num_images_total': len(image_files),
+        'num_images_valid': total_patches_processed - total_black_patches,
+        'num_images_black': total_black_patches,
         'total_pixels': int(total_pixels),
         'bins': bins,
-        'normalization': 'divide_by_2047',
+        'range': [0, 65535],
+        'normalization': 'none (raw uint16)',
         'loader': 'GeoTIFFLoader',
-        'input_dir': str(input_dir.absolute())
+        'input_dir': str(input_dir.absolute()),
+        'black_filtering': True
     }
+    
+    # Save histogram data as NPZ for later combining
+    if histogram_data_output:
+        print()
+        print("Saving histogram data for later combining...")
+        np.savez_compressed(
+            histogram_data_output,
+            histogram=hist,
+            bin_edges=bin_edges,
+            metadata=results['metadata']
+        )
+        print(f"  Histogram data saved to: {histogram_data_output}")
     
     # Generate histogram visualization if requested
     if save_histogram:
@@ -134,15 +180,16 @@ def compute_global_percentiles(
 def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
     """
     Generate and save histogram visualization with percentile markers.
+    Plots on 0-65535 range (raw 16-bit values).
     
     Args:
         hist: Histogram counts
-        bin_edges: Bin edge values
+        bin_edges: Bin edge values (0-65535 range)
         stats: Statistics dictionary with percentile values
         percentiles: List of percentiles that were computed
-        output_path: Path to save the plot (if None, derived from stats file)
+        output_path: Path to save the plot
     """
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
     
     # Bin centers for plotting
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
@@ -150,26 +197,31 @@ def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
     # Plot 1: Linear scale histogram
     ax1.bar(bin_centers, hist, width=np.diff(bin_edges), 
             edgecolor='none', alpha=0.7, color='steelblue')
-    ax1.set_xlabel('Normalized Pixel Value [0, 1]', fontsize=12)
-    ax1.set_ylabel('Pixel Count', fontsize=12)
-    ax1.set_title('Global Histogram - Linear Scale', fontsize=14, fontweight='bold')
+    ax1.set_xlabel('Pixel Value (Raw 16-bit, 0-65535)', fontsize=12, fontweight='bold')
+    ax1.set_ylabel('Pixel Count', fontsize=12, fontweight='bold')
+    ax1.set_title('Global Histogram - Linear Scale (0-65535 Range)', fontsize=14, fontweight='bold')
+    ax1.set_xlim(0, 65535)
     ax1.grid(True, alpha=0.3)
     
     # Add percentile lines
-    colors = ['red', 'orange', 'green', 'purple', 'brown']
+    colors = ['red', 'orange', 'green', 'purple', 'brown', 'pink']
     for i, p in enumerate(percentiles):
         p_val = stats[f'p{p}']
         color = colors[i % len(colors)]
-        ax1.axvline(p_val, color=color, linestyle='--', linewidth=2, 
-                   label=f'{p}th percentile: {p_val:.4f}')
-    ax1.legend(fontsize=10)
+        ax1.axvline(p_val, color=color, linestyle='--', linewidth=2.5, 
+                   label=f'{p}th percentile: {p_val:.1f}', alpha=0.8)
+    ax1.legend(fontsize=11, loc='upper right')
     
     # Plot 2: Log scale histogram (better for seeing distribution)
-    ax2.bar(bin_centers, hist, width=np.diff(bin_edges), 
+    # Filter out zero counts for log scale
+    nonzero_mask = hist > 0
+    ax2.bar(bin_centers[nonzero_mask], hist[nonzero_mask], 
+            width=np.diff(bin_edges)[nonzero_mask], 
             edgecolor='none', alpha=0.7, color='steelblue')
-    ax2.set_xlabel('Normalized Pixel Value [0, 1]', fontsize=12)
-    ax2.set_ylabel('Pixel Count (log scale)', fontsize=12)
-    ax2.set_title('Global Histogram - Log Scale', fontsize=14, fontweight='bold')
+    ax2.set_xlabel('Pixel Value (Raw 16-bit, 0-65535)', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Pixel Count (log scale)', fontsize=12, fontweight='bold')
+    ax2.set_title('Global Histogram - Log Scale (0-65535 Range)', fontsize=14, fontweight='bold')
+    ax2.set_xlim(0, 65535)
     ax2.set_yscale('log')
     ax2.grid(True, alpha=0.3, which='both')
     
@@ -177,21 +229,28 @@ def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
     for i, p in enumerate(percentiles):
         p_val = stats[f'p{p}']
         color = colors[i % len(colors)]
-        ax2.axvline(p_val, color=color, linestyle='--', linewidth=2, 
-                   label=f'{p}th percentile: {p_val:.4f}')
-    ax2.legend(fontsize=10)
+        ax2.axvline(p_val, color=color, linestyle='--', linewidth=2.5, 
+                   label=f'{p}th percentile: {p_val:.1f}', alpha=0.8)
+    ax2.legend(fontsize=11, loc='upper right')
     
     # Add metadata text
     metadata = stats['metadata']
-    info_text = f"Images: {metadata['num_images']:,} | Pixels: {metadata['total_pixels']:,} | Bins: {metadata['bins']:,}"
-    fig.text(0.5, 0.02, info_text, ha='center', fontsize=10, 
-             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    info_lines = [
+        f"Valid Images: {metadata['num_images_valid']:,} | Black Images Filtered: {metadata['num_images_black']:,}",
+        f"Total Pixels: {metadata['total_pixels']:,} | Bins: {metadata['bins']:,}",
+        f"Suggested Normalization Factor: {stats.get('suggested_normalization_factor', 'N/A'):.1f}"
+    ]
+    info_text = '\n'.join(info_lines)
     
-    plt.tight_layout(rect=[0, 0.03, 1, 1])
+    fig.text(0.5, 0.02, info_text, ha='center', fontsize=10, 
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+             family='monospace')
+    
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
     
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"  Histogram saved to: {output_path}")
+        print(f"  Histogram plot saved to: {output_path}")
     
     plt.close()
 
@@ -199,7 +258,7 @@ def plot_histogram(hist, bin_edges, stats, percentiles, output_path=None):
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(
-        description="Compute global percentile statistics across dataset using exact pipeline loading method"
+        description="Compute global percentile statistics in RAW 0-65535 range (filters black patches)"
     )
     parser.add_argument(
         '--input-dir', '-i',
@@ -223,7 +282,7 @@ def main():
         '--bins',
         type=int,
         default=65536,
-        help='Number of histogram bins for precision (default: 65536)'
+        help='Number of histogram bins (default: 65536 for full 16-bit range)'
     )
     parser.add_argument(
         '--percentiles',
@@ -243,17 +302,28 @@ def main():
         default=None,
         help='Path to save histogram plot (default: same as output with .png extension)'
     )
+    parser.add_argument(
+        '--histogram-data',
+        type=str,
+        default=None,
+        help='Path to save histogram data NPZ (default: same as output with _hist.npz extension)'
+    )
     
     args = parser.parse_args()
     
     input_dir = Path(args.input_dir)
     output_path = Path(args.output)
     
-    # Determine histogram output path
+    # Determine histogram output paths
     if args.histogram_output:
         histogram_path = Path(args.histogram_output)
     else:
         histogram_path = output_path.with_suffix('.png')
+    
+    if args.histogram_data:
+        histogram_data_path = Path(args.histogram_data)
+    else:
+        histogram_data_path = output_path.with_name(output_path.stem + '_hist.npz')
     
     if not input_dir.exists():
         print(f"Error: Input directory does not exist: {input_dir}")
@@ -267,7 +337,8 @@ def main():
             bins=args.bins,
             pattern=args.pattern,
             save_histogram=not args.no_histogram,
-            histogram_output=histogram_path
+            histogram_output=histogram_path,
+            histogram_data_output=histogram_data_path
         )
         
         # Save to YAML

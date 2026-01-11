@@ -139,6 +139,12 @@ data/output/*
 *.temp
 processing_summary.txt
 *.log
+*.tiff
+*.tif
+*.png
+*.jpg
+*.jpeg
+*.npy
 
 # IDE files
 .vscode/
