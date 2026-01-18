@@ -11,7 +11,7 @@ Generate synthetic training data for deep learning-based 4× super-resolution fr
 We simulate data from satellite sensors with multiple panchromatic (PAN) imagers:
 - **Mode 2**: 2 LR frames with shifts [(0,0), (0.5,0.5)]
 - **Mode 4**: 4 LR frames with shifts [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
-- **WorldView-3 data**: From SpaceNet 2 dataset (AOI_3_Paris/PAN/)
+
 
 ### Key Features
 - **PyTorch Dataset Integration**: `DegradationDataset` class for on-the-fly degradation during training
@@ -408,18 +408,5 @@ Core dependencies:
 
 See [requirements.txt](requirements.txt) for full list.
 
-## License
 
-MIT License
 
-## Citation
-
-If you use this pipeline in your research, please cite:
-```bibtex
-@software{hardware_aware_degradation,
-  title={Hardware-aware Degradation Pipeline for Satellite MFSR},
-  author={ISRO MFSR Team},
-  year={2025},
-  url={https://github.com/HarshDhru23/Hardware-aware-degradation}
-}
-```
