@@ -1,89 +1,96 @@
 # Hardware-aware Degradation Pipeline
 
-## ISRO Multi-Frame Super-Resolution (MFSR) Project - Contribution 1
-
-A comprehensive degradation pipeline that implements the observation model for generating synthetic training data for satellite super-resolution. This pipeline simulates the hardware characteristics of satellite sensors to create realistic low-resolution image pairs from high-resolution ground truth data.
+A comprehensive degradation pipeline for generating synthetic training data for satellite Multi-Frame Super-Resolution (MFSR). This pipeline simulates hardware characteristics of satellite sensors to create realistic low-resolution image frames from high-resolution ground truth data.
 
 ## Project Overview
 
 ### Primary Goal
-Build a deep learning model (Contribution-2) that can create a 4x super-resolution image from two low-resolution (LR) input frames.
+Generate synthetic training data for deep learning-based 4× super-resolution from multiple low-resolution (LR) input frames.
 
 ### Hardware Context  
-We simulate data from a specific satellite sensor with two panchromatic (PAN) imagers:
-- **P1 and P2**: Physically offset by (0.5, 0.5) pixels (diagonal shift)
+We simulate data from satellite sensors with multiple panchromatic (PAN) imagers:
+- **Mode 2**: 2 LR frames with shifts [(0,0), (0.5,0.5)]
+- **Mode 4**: 4 LR frames with shifts [(0,0), (0.25,0.25), (0.5,0.5), (0.75,0.75)]
 - **WorldView-3 data**: From SpaceNet 2 dataset (AOI_3_Paris/PAN/)
 
-### This Repository's Goal (Contribution-1)
-Create synthetic training data by implementing the 'Observation Model' from super-resolution research. The pipeline takes one High-Resolution (HR) 'ground truth' image and generates two degraded, low-resolution images (LR1 and LR2) that simulate the P1 and P2 sensors.
+### Key Features
+- **PyTorch Dataset Integration**: `DegradationDataset` class for on-the-fly degradation during training
+- **Multi-frame LR Generation**: 2 or 4 frames based on downsampling mode
+- **Anisotropic Gaussian PSF**: Realistic sensor blur modeling
+- **Stochastic Sub-pixel Shifts**: Simulates sensor jitter with configurable variance
+- **Poisson-Gaussian Noise**: Combined photon shot noise and read noise
+- **Global Percentile Normalization**: Consistent normalization across datasets
+- **8-way Data Augmentation**: 4 rotations × 2 flips
 
 ## Theoretical Model
 
-The pipeline implements the following **Observation Model**:
+The pipeline implements the **Observation Model**:
 
 $$y_k = D B_k M_k x + n_k$$
 
 Where:
-- **x**: The "Desired HR Image" (ground truth)  
-- **y_k**: The k-th observed LR image (we create y_1 and y_2)
-- **M_k**: The "Warping" operator (0.5-pixel shift simulation)
-- **B_k**: The "Blur" operator (Optical + Motion blur)
-- **D**: The "Downsampling" operator (includes Sensor PSF blur)
-- **n_k**: Additive noise (Gaussian + Poisson)
-
-## Pipeline Implementation
-
-### A. Generate y_1 (LR1 - Reference Frame)
-1. **Warping (M_1)**: Identity operation (no shift)
-2. **Blurring (B_1)**: 
-   - Optical Blur: 2D Gaussian kernel
-   - Motion Blur: 1D vertical kernel (TDI velocity mismatch)
-3. **Downsampling & Sensor PSF (D)**: Average pooling (4x4, stride=4)
-4. **Noise (n_1)**: Gaussian + Poisson noise
-
-### B. Generate y_2 (LR2 - Shifted Frame)  
-1. **Warping (M_2)**: (0.5, 0.5) LR pixel shift = (2, 2) HR pixel shift
-2. **Blurring (B_2)**: Same as LR1
-3. **Downsampling & Sensor PSF (D)**: Same as LR1  
-4. **Noise (n_2)**: Independent Gaussian + Poisson noise
-
-### C. Patch Extraction
-- Extract corresponding patches: (HR_patch, LR1_patch, LR2_patch)
-- **HR patches**: 256×256 pixels
-- **LR patches**: 64×64 pixels (4x downsampling)
+- **x**: High-resolution ground truth image
+- **y_k**: k-th observed LR image
+- **M_k**: Warping operator (sub-pixel shift)
+- **B_k**: Blur operator (anisotropic Gaussian PSF)
+- **D**: Downsampling operator (spatial integration)
+- **n_k**: Noise (Poisson shot noise + Gaussian read noise + ADC quantization)
 
 ## Repository Structure
 
 ```
 Hardware-aware-degradation/
 ├── src/
+│   ├── __init__.py
+│   ├── config.py                    # ConfigManager for YAML configuration
+│   ├── dataset.py                   # DegradationDataset (PyTorch Dataset)
 │   ├── degradation/
 │   │   ├── __init__.py
-│   │   ├── pipeline.py          # Main DegradationPipeline class
-│   │   └── operators.py         # Individual operators (M_k, B_k, D, n_k)
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── data_io.py          # GeoTIFF loading and patch extraction
-│   │   ├── validation.py       # Input validation utilities
-│   │   └── visualization.py    # Result visualization tools
-│   └── config.py               # Configuration management
+│   │   ├── pipeline.py              # DegradationPipeline (main pipeline class)
+│   │   └── operators.py             # WarpingOperator, BlurOperator, 
+│   │                                # DownsamplingOperator, NoiseOperator
+│   └── utils/
+│       ├── __init__.py
+│       ├── bicubic_core.py          # Bicubic interpolation with antialiasing
+│       ├── data_io.py               # GeoTIFFLoader, PatchExtractor
+│       ├── validation.py            # Input/config validation utilities
+│       └── visualization.py         # Visualization tools
+│
 ├── configs/
-│   ├── default_config.yaml     # Default parameters
-│   ├── high_quality_config.yaml # High-quality processing
-│   └── fast_config.yaml        # Fast processing for testing
+│   ├── default_config.yaml          # Default parameters (stochastic, 4-frame)
+│   ├── high_quality_config.yaml     # High-quality processing
+│   ├── fast_config.yaml             # Fast processing for testing
+│   └── debug_config.yaml            # Debug configuration
+│
 ├── scripts/
-│   └── process_images.py       # Main batch processing script
-├── data/
-│   ├── input/                  # Input HR GeoTIFF files
-│   └── output/                 # Generated LR patches
+│   └── process_images.py            # Batch processing script
+│
 ├── tests/
-│   └── (unit and integration tests)
-├── docs/
-│   └── (documentation files)
-├── requirements.txt            # Python dependencies
-├── environment.yml            # Conda environment
-├── setup.py                   # Package installation
-└── README.md                  # This file
+│   ├── __init__.py
+│   ├── conftest.py                  # Test fixtures
+│   ├── test_operators.py            # Operator unit tests
+│   └── test_pipeline.py             # Pipeline integration tests
+│
+├── data/
+│   ├── input/                       # Place HR GeoTIFF images here
+│   └── output/                      # Generated outputs
+│
+├── test_output/                     # Sample outputs for verification
+│   ├── hr_image.npy
+│   ├── lr1_image.npy
+│   └── lr2_image.npy
+│
+├── analyze_degradation.py           # Step-by-step pipeline visualization
+├── compute_global_stats.py          # Compute dataset-wide percentile stats
+├── combine_histograms.py            # Combine histogram stats from multiple dirs
+├── convert_npy_to_png.py            # Convert NPY outputs to PNG
+├── test.py                          # Quick test script
+├── test_downsampling_mode.py        # Test 2-frame vs 4-frame modes
+│
+├── requirements.txt                 # Python dependencies (pip)
+├── environment.yml                  # Conda environment
+├── setup.py                         # Package installation
+└── README.md                        # This file
 ```
 
 ## Quick Start
@@ -109,15 +116,29 @@ cd Hardware-aware-degradation
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\\Scripts\\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Data Preparation
+#### Option C: Install as Package
+```bash
+pip install -e .
+```
 
-Place your HR GeoTIFF files in the `data/input/` directory:
+### 2. Compute Global Statistics (Recommended)
+
+For consistent normalization across your dataset:
+```bash
+python compute_global_stats.py \
+    --input-dir /path/to/your/images \
+    --output configs/global_stats.yaml
+```
+
+### 3. Data Preparation
+
+Place your HR GeoTIFF files in `data/input/`:
 ```bash
 data/input/
 ├── image_001.tif
@@ -125,67 +146,113 @@ data/input/
 └── ...
 ```
 
-### 3. Configuration
+### 4. Configuration
 
-Choose or modify a configuration file:
-- `configs/default_config.yaml` - Balanced processing
-- `configs/high_quality_config.yaml` - High-quality, slower processing  
-- `configs/fast_config.yaml` - Fast processing for testing
+Edit `configs/default_config.yaml` or create your own. Key parameters:
+- `downsampling_mode`: 2 or 4 (number of LR frames)
+- `shift_mode`: 'deterministic' or 'stochastic'
+- `psf_sigma_x`, `psf_sigma_y`: PSF blur parameters
+- `photon_gain`: Sensor gain for Poisson noise
 
-### 4. Run Processing
+### 5. Run Processing
 
 ```bash
-# Basic usage
-python scripts/process_images.py \\
-    --input_dir data/input \\
-    --output_dir data/output \\
+python scripts/process_images.py \
+    --input_dir data/input \
+    --output_dir data/output \
     --config configs/default_config.yaml
-
-# Advanced usage with options
-python scripts/process_images.py \\
-    --input_dir data/input \\
-    --output_dir data/output \\
-    --config configs/high_quality_config.yaml \\
-    --pattern "*.tif" \\
-    --max_images 100 \\
-    --log_file processing.log
 ```
-
-## Configuration Parameters
-
-### Core Pipeline Parameters
-| Parameter | Range | Default | Description |
-|-----------|--------|---------|-------------|
-| `downsampling_factor` | 2-8 | 4 | Super-resolution factor |
-| `optical_sigma` | 0.5-3.0 | 1.0 | Gaussian blur standard deviation |
-| `optical_kernel_size` | 3-15 (odd) | 5 | Gaussian kernel size |
-| `motion_kernel_size` | 1-9 (odd) | 3 | Motion blur kernel size |
-
-### Noise Parameters
-| Parameter | Range | Default | Description |
-|-----------|--------|---------|-------------|
-| `gaussian_mean` | -10.0 to 10.0 | 0.0 | Gaussian noise mean |
-| `gaussian_std` | 0.001-20.0 | 0.1 | Gaussian noise std (0.01-0.1 for normalized)|
-| `poisson_lambda` | 0.1-5.0 | 1.0 | Poisson noise scaling factor |
-| `enable_gaussian` | true/false | true | Enable Gaussian noise |
-| `enable_poisson` | true/false | false | Enable Poisson noise (recommended: false for normalized) |
-
-### Patch Extraction Parameters  
-| Parameter | Range | Default | Description |
-|-----------|--------|---------|-------------|
-| `hr_patch_size` | 64-1024 | 256 | HR patch size (pixels) |
-| `lr_patch_size` | 16-256 | 64 | LR patch size (pixels) |
-| `patch_stride` | - | 256 | Patch extraction stride |
-| `min_valid_pixels` | 0.5-1.0 | 0.95 | Min fraction of valid pixels |
 
 ## Usage Examples
 
-### Basic Python API Usage
+### Using DegradationDataset (Recommended for Training)
+
+The `DegradationDataset` class is a PyTorch Dataset that generates degraded LR images on-the-fly during training:
 
 ```python
-from degradation import DegradationPipeline
-from config import ConfigManager
-from utils.data_io import GeoTIFFLoader
+import torch
+from torch.utils.data import DataLoader
+from src.dataset import DegradationDataset, create_dataloader, collate_fn
+
+# Create dataset
+dataset = DegradationDataset(
+    hr_image_dir='data/input',
+    config_path='configs/default_config.yaml',
+    global_stats_path='configs/global_stats.yaml',  # Optional
+    augment=True,                                    # 8-way augmentation
+    cache_size=100,                                  # LRU cache for HR images
+    file_pattern='*.tif',
+    seed=42
+)
+
+print(f"Dataset size: {len(dataset)}")
+
+# Get a single sample
+sample = dataset[0]
+print(f"HR shape: {sample['hr'].shape}")        # [1, H, W]
+print(f"LR frames: {len(sample['lr'])}")        # 2 or 4 frames
+print(f"LR[0] shape: {sample['lr'][0].shape}")  # [1, H/4, W/4]
+print(f"PSF sigma_x: {sample['psf_params']['sigma_x']}")
+print(f"Shift values: {sample['shift_values']}")
+
+# Create DataLoader using helper function
+dataloader = create_dataloader(
+    hr_image_dir='data/input',
+    config_path='configs/default_config.yaml',
+    global_stats_path='configs/global_stats.yaml',
+    batch_size=8,
+    num_workers=4,
+    shuffle=True,
+    augment=True
+)
+
+# Training loop
+for batch in dataloader:
+    hr = batch['hr']                    # [B, 1, H, W]
+    lr_frames = batch['lr']             # List of [B, 1, H', W']
+    psf_kernels = batch['psf_kernels']  # List of [B, Kh, Kw]
+    shift_values = batch['shift_values'] # [B, num_frames, 2]
+    
+    # Your training code here
+    break
+```
+
+### Dataset Output Structure
+
+Each sample from `DegradationDataset` returns:
+```python
+{
+    'hr': torch.Tensor,           # [1, H, W] - HR image
+    'lr': List[torch.Tensor],     # List of [1, H', W'] - LR frames
+    'psf_kernels': List[Tensor],  # List of [Kh, Kw] - PSF kernels
+    'psf_params': {
+        'sigma_x': List[float],   # PSF sigma_x per frame
+        'sigma_y': List[float],   # PSF sigma_y per frame
+        'theta': List[float]      # PSF rotation per frame
+    },
+    'shift_values': List,         # [[dx, dy], ...] per frame
+    'metadata': {
+        'filename': str,
+        'file_idx': int,
+        'aug_idx': int,
+        'rotation': int,          # 0, 90, 180, or 270 degrees
+        'flip': bool,
+        'num_lr_frames': int,
+        'downsampling_factor': int,
+        'hr_shape': tuple,
+        'lr_shape': tuple
+    }
+}
+```
+
+### Using DegradationPipeline Directly
+
+For batch processing or custom workflows:
+
+```python
+from src.degradation.pipeline import DegradationPipeline
+from src.config import ConfigManager
+from src.utils.data_io import GeoTIFFLoader
 
 # Load configuration
 config = ConfigManager('configs/default_config.yaml')
@@ -193,55 +260,69 @@ config = ConfigManager('configs/default_config.yaml')
 # Initialize pipeline
 pipeline = DegradationPipeline(config.get_all())
 
-# Load and process an image
-loader = GeoTIFFLoader()
+# Load HR image
+loader = GeoTIFFLoader(normalize=True)
 hr_image = loader.load_image('data/input/sample.tif')
 
-# Generate LR image pair
-lr1, lr2 = pipeline.process_image(hr_image, seed=42)
+# Generate LR frames (2 or 4 based on config)
+lr_frames = pipeline.process_image(hr_image, seed=42)
 
 print(f"HR shape: {hr_image.shape}")
-print(f"LR1 shape: {lr1.shape}")  
-print(f"LR2 shape: {lr2.shape}")
+print(f"Number of LR frames: {len(lr_frames)}")
+print(f"LR frame shape: {lr_frames[0].shape}")
+print(f"Shift values: {pipeline.shift_values}")
 ```
 
-### Custom Configuration
+### Analyzing the Degradation Pipeline
 
-```python
-# Create custom configuration
-custom_config = {
-    'downsampling_factor': 4,
-    'optical_sigma': 1.5,
-    'gaussian_std': 8.0,
-    'hr_patch_size': 512,
-    'lr_patch_size': 128
-}
+Visualize each step of the pipeline:
 
-pipeline = DegradationPipeline(custom_config)
+```bash
+python analyze_degradation.py --image data/input/sample.tif
 ```
 
-### Batch Processing with Progress Tracking
+This creates visualizations showing:
+1. Original HR image
+2. After warping (geometric shift)
+3. After blur (PSF convolution)
+4. After downsampling (spatial integration)
+5. After noise (Poisson + Gaussian + ADC)
 
-```python
-from tqdm import tqdm
-from utils.data_io import GeoTIFFLoader, PatchExtractor
+## Configuration Parameters
 
-loader = GeoTIFFLoader()
-extractor = PatchExtractor(hr_patch_size=256, lr_patch_size=64)
+### Core Pipeline Parameters
+| Parameter | Range | Default | Description |
+|-----------|-------|---------|-------------|
+| `downsampling_factor` | 2-8 | 4 | Super-resolution factor |
+| `downsampling_mode` | 2, 4 | 4 | Number of LR frames to generate |
+| `shift_mode` | deterministic/stochastic | stochastic | Shift sampling method |
+| `shift_variance_2x` | 0.01-0.15 | 0.08 | Shift variance for 2-frame mode |
+| `shift_variance_4x` | 0.01-0.1 | 0.03 | Shift variance for 4-frame mode |
 
-# Process multiple images
-image_files = loader.find_geotiff_files('data/input')
+### PSF Blur Parameters (Anisotropic Gaussian)
+| Parameter | Range | Default | Description |
+|-----------|-------|---------|-------------|
+| `psf_sigma_x` | 0.5-2.0 | 0.6 | Horizontal PSF sigma |
+| `psf_sigma_y` | 0.5-2.0 | 0.8 | Vertical PSF sigma |
+| `psf_theta` | 0-180 | 0.0 | PSF rotation angle (degrees) |
+| `psf_kernel_size` | 3-15 (odd) | 9 | PSF kernel size |
 
-for image_path in tqdm(image_files):
-    hr_image = loader.load_image(image_path)
-    lr1, lr2 = pipeline.process_image(hr_image)
-    
-    # Extract patches
-    patches = extractor.extract_patches(hr_image, lr1, lr2)
-    
-    # Save patches
-    # ... (save logic)
-```
+### Noise Parameters
+| Parameter | Range | Default | Description |
+|-----------|-------|---------|-------------|
+| `enable_gaussian` | true/false | true | Enable Gaussian read noise |
+| `enable_poisson` | true/false | true | Enable Poisson shot noise |
+| `gaussian_std` | 0.0001-0.1 | 0.0005 | Gaussian noise std dev |
+| `photon_gain` | 20000-40000 | 30000 | Photon gain for Poisson noise |
+| `enable_quantization` | true/false | true | Enable ADC quantization |
+| `quantization_bits` | 8-16 | 11 | Bit depth (11-bit for WV-3) |
+
+### Patch Parameters
+| Parameter | Range | Default | Description |
+|-----------|-------|---------|-------------|
+| `hr_patch_size` | 64-1024 | 256 | HR patch size (pixels) |
+| `lr_patch_size` | 16-256 | 64 | LR patch size (auto: hr/factor) |
+| `min_valid_pixels` | 0.5-1.0 | 0.95 | Min valid pixel fraction |
 
 ## Testing
 
@@ -249,67 +330,46 @@ Run the test suite to verify installation:
 
 ```bash
 # Run all tests
-pytest tests/
+pytest tests/ -v
 
 # Run with coverage
 pytest tests/ --cov=src --cov-report=html
 
 # Run specific test file
 pytest tests/test_pipeline.py -v
+
+# Quick functionality test
+python test.py
+
+# Test downsampling modes (2-frame vs 4-frame)
+python test_downsampling_mode.py
 ```
 
 ## Output Format
 
-The pipeline generates the following outputs:
+### When Using DegradationDataset
 
-### Patch Files (NumPy format)
+The dataset returns PyTorch tensors directly, ready for training:
+- HR image: `[1, H, W]` tensor
+- LR frames: List of `[1, H/4, W/4]` tensors
+- PSF kernels: List of `[Kh, Kw]` tensors
+- Metadata: Dictionary with augmentation info
+
+### When Using Batch Processing Script
+
 ```
 data/output/
 ├── image_001/
-│   ├── image_001_000000_hr.npy    # HR patch (256x256)
-│   ├── image_001_000000_lr1.npy   # LR1 patch (64x64)
-│   ├── image_001_000000_lr2.npy   # LR2 patch (64x64)
+│   ├── image_001_000000_hr.npy    # HR patch (256×256)
+│   ├── image_001_000000_lr0.npy   # LR frame 0 (64×64)
+│   ├── image_001_000000_lr1.npy   # LR frame 1 (64×64)
+│   ├── image_001_000000_lr2.npy   # LR frame 2 (if mode=4)
+│   ├── image_001_000000_lr3.npy   # LR frame 3 (if mode=4)
 │   └── ...
 ├── visualizations/
-│   ├── image_001_degradation.png  # Visualization
-│   └── ...
-└── processing_summary.txt         # Processing statistics
+│   └── image_001_degradation.png
+└── processing_summary.txt
 ```
-
-### Patch Loading Example
-```python
-import numpy as np
-
-# Load patches
-hr_patch = np.load('data/output/image_001/image_001_000000_hr.npy')
-lr1_patch = np.load('data/output/image_001/image_001_000000_lr1.npy')  
-lr2_patch = np.load('data/output/image_001/image_001_000000_lr2.npy')
-
-# Verify spatial correspondence
-assert hr_patch.shape == (256, 256)
-assert lr1_patch.shape == (64, 64)
-assert lr2_patch.shape == (64, 64)
-```
-
-## Validation and Quality Control
-
-The pipeline includes comprehensive validation:
-
-### Image Validation
-- Dimension compatibility with downsampling factor
-- Data type and value range checks  
-- NaN/infinity detection
-- Minimum valid pixel requirements
-
-### Configuration Validation
-- Parameter range verification
-- Compatibility checks between related parameters
-- Required parameter presence
-
-### Processing Validation
-- Patch extraction quality assessment
-- SNR analysis for noise validation
-- Edge preservation metrics for blur validation
 
 ## Troubleshooting
 
@@ -317,33 +377,49 @@ The pipeline includes comprehensive validation:
 
 1. **Import Errors**
    ```bash
-   # Make sure all dependencies are installed
    pip install -r requirements.txt
+   # Or with conda
+   conda env update -f environment.yml
    ```
 
 2. **GeoTIFF Loading Issues**
    ```bash
-   # Install GDAL for better GeoTIFF support
-   conda install gdal
+   # Install rasterio for better GeoTIFF support
+   conda install -c conda-forge rasterio
    ```
 
-3. **Memory Issues with Large Images**
-   ```yaml
-   # Use smaller patch sizes in config
-   hr_patch_size: 128
-   lr_patch_size: 32
-   ```
+3. **CUDA/GPU Issues**
+   The pipeline uses NumPy/OpenCV (CPU). PyTorch is only needed for `DegradationDataset`.
 
-4. **Dimension Compatibility Errors**
-   - Ensure HR image dimensions are divisible by downsampling factor
-   - The pipeline automatically crops images if needed
+4. **Memory Issues**
+   - Reduce `cache_size` in DegradationDataset
+   - Use smaller `batch_size` in DataLoader
+   - Process images in chunks
 
-### Debug Mode
-```bash
-# Run with debug logging
-python scripts/process_images.py \\
-    --input_dir data/input \\
-    --output_dir data/output \\
-    --config configs/default_config.yaml \\
-    --log_file debug.log
+## Dependencies
+
+Core dependencies:
+- Python ≥ 3.8
+- NumPy, SciPy, OpenCV
+- PyTorch (for DegradationDataset)
+- rasterio or Pillow (for GeoTIFF support)
+- PyYAML (for configuration)
+- matplotlib (for visualization)
+
+See [requirements.txt](requirements.txt) for full list.
+
+## License
+
+MIT License
+
+## Citation
+
+If you use this pipeline in your research, please cite:
+```bibtex
+@software{hardware_aware_degradation,
+  title={Hardware-aware Degradation Pipeline for Satellite MFSR},
+  author={ISRO MFSR Team},
+  year={2025},
+  url={https://github.com/HarshDhru23/Hardware-aware-degradation}
+}
 ```
