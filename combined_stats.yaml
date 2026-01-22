@@ -1,0 +1,166 @@
+p2: 172.9973602294922
+p98: 2046.968765258789
+suggested_normalization_factor: 2046.968765258789
+metadata:
+  num_datasets: 11
+  dataset_files:
+  - configs/AOI_2_Vegas_Train_SN2_hist.npz
+  - configs/AOI_3_Paris_Train_SN2_hist.npz
+  - configs/AOI_7_Moscow_Train_SN5_hist.npz
+  - configs/global_stats_spacenet2_hist.npz
+  - configs/AOI_4_Shanghai_Train_SN2_hist.npz
+  - configs/AOI_5_Khartoum_Train_SN2_hist.npz
+  - configs/global_stats_spacenet2-AOI_7_Moscow_Train_SN5_hist.npz
+  - configs/AOI_5_Khartoum_Train_SN3_hist.npz
+  - configs/AOI_4_Shanghai_Train_SN3_hist.npz
+  - configs/AOI_8_Mumbai_Train_SN5_hist.npz
+  - configs/AOI_3_Paris_Train_SN3_hist.npz
+  total_pixels: 13428116854
+  bins: 65536
+  range:
+  - 0
+  - 65535
+  individual_datasets:
+  - num_images_total: 3851
+    num_images_valid: 3838
+    num_images_black: 13
+    total_pixels: 1579554837
+    total_black_pixels_filtered: 42000163
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_2_Vegas_Train_SN2/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1148
+    num_images_valid: 1148
+    num_images_black: 0
+    total_pixels: 443042205
+    total_black_pixels_filtered: 41987795
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_3_Paris_Train_SN2/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1353
+    num_images_valid: 1353
+    num_images_black: 0
+    total_pixels: 2256879329
+    total_black_pixels_filtered: 29690671
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_7_Moscow_Train_SN5/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1148
+    num_images_valid: 1148
+    num_images_black: 0
+    total_pixels: 443042205
+    total_black_pixels_filtered: 41987795
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_3_Paris_Train_SN2/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 4582
+    num_images_valid: 4553
+    num_images_black: 29
+    total_pixels: 1829374591
+    total_black_pixels_filtered: 94267909
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_4_Shanghai_Train_SN2/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1012
+    num_images_valid: 1012
+    num_images_black: 0
+    total_pixels: 350546616
+    total_black_pixels_filtered: 77023384
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_5_Khartoum_Train_SN2/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1353
+    num_images_valid: 1353
+    num_images_black: 0
+    total_pixels: 2256879329
+    total_black_pixels_filtered: 29690671
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_7_Moscow_Train_SN5/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 283
+    num_images_valid: 283
+    num_images_black: 0
+    total_pixels: 352330442
+    total_black_pixels_filtered: 125939558
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_5_Khartoum_Train_SN3/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1198
+    num_images_valid: 1189
+    num_images_black: 9
+    total_pixels: 1820005301
+    total_black_pixels_filtered: 189404699
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_4_Shanghai_Train_SN3/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 1016
+    num_images_valid: 1016
+    num_images_black: 0
+    total_pixels: 1654590428
+    total_black_pixels_filtered: 62449572
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_8_Mumbai_Train_SN5/PAN
+    black_filtering: both images and pixels (value=0)
+  - num_images_total: 310
+    num_images_valid: 310
+    num_images_black: 0
+    total_pixels: 441871571
+    total_black_pixels_filtered: 82028429
+    bins: 65536
+    range:
+    - 0
+    - 65535
+    normalization: none (raw uint16)
+    loader: GeoTIFFLoader
+    input_dir: /scratch/raj.modi/AOI_3_Paris_Train_SN3/PAN
+    black_filtering: both images and pixels (value=0)
