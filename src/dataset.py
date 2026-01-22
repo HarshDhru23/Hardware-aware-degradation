@@ -204,9 +204,9 @@ class DegradationDataset(Dataset):
                 kernel = torch.from_numpy(blur_op.psf_kernel).float()
             
             psf_params = {
-                'sigma_x': blur_op.psf_sigma_x,
-                'sigma_y': blur_op.psf_sigma_y,
-                'theta': blur_op.psf_theta,
+                'sigma_x': blur_op.sigma_x,
+                'sigma_y': blur_op.sigma_y,
+                'theta': blur_op.theta,
                 'kernel': kernel
             }
             
@@ -680,9 +680,9 @@ class MSDataset(Dataset):
                 kernel = torch.from_numpy(blur_op.psf_kernel).float()
             
             psf_params = {
-                'sigma_x': blur_op.psf_sigma_x,
-                'sigma_y': blur_op.psf_sigma_y,
-                'theta': blur_op.psf_theta,
+                'sigma_x': blur_op.sigma_x,
+                'sigma_y': blur_op.sigma_y,
+                'theta': blur_op.theta,
                 'kernel': kernel
             }
             
