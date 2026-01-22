@@ -20,7 +20,7 @@ from functools import lru_cache
 
 from .degradation.pipeline import DegradationPipeline
 from .utils.data_io import GeoTIFFLoader
-from .utils.config import ConfigManager
+from .config import ConfigManager
 
 
 class DegradationDataset(Dataset):
