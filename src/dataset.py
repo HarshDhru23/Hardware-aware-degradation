@@ -91,7 +91,7 @@ class DegradationDataset(Dataset):
         self.pipeline = DegradationPipeline(self.config_dict)
         
         # Get parameters from config
-        self.num_lr_frames = self.config.get('num_lr_frames', 2)
+        self.num_lr_frames = self.config.get('num_lr_frames', 4)
         self.downsampling_factor = self.config.get('downsampling_factor', 4)
         self.hr_patch_size = self.config.get('hr_patch_size', 256)
         self.lr_patch_size = self.hr_patch_size // self.downsampling_factor
