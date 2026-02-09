@@ -138,7 +138,11 @@ class DegradationDataset(Dataset):
     
     def _apply_global_normalization(self, image: torch.Tensor) -> torch.Tensor:
         """
-        Apply global percentile normalization to image.
+        Apply global percentile normalization to image with safety checks.
+        
+        Uses hybrid approach:
+        - Checks if image values are significantly below global p2
+        - Falls back to per-image normalization if needed to prevent black regions
         
         Args:
             image: Input image tensor (raw uint16 or already normalized)
@@ -150,12 +154,50 @@ class DegradationDataset(Dataset):
             # Fallback to simple division by max value
             return image / 65535.0
         
-        p2 = self.global_stats.get('p2', 0)
-        p98 = self.global_stats.get('p98', 65535)
+        p2_global = self.global_stats.get('p2', 0)
+        p98_global = self.global_stats.get('p98', 65535)
+        
+        # Safety check: compute per-image percentiles
+        img_min = image.min().item()
+        img_p2 = torch.quantile(image.flatten(), 0.02).item()
+        img_p98 = torch.quantile(image.flatten(), 0.98).item()
+        
+        # Check if image distribution is significantly different from global stats
+        # If more than 10% of pixels would be clipped to black, use hybrid approach
+        pixels_below_p2 = (image < p2_global).float().mean().item()
+        
+        if pixels_below_p2 > 0.1 or img_min < (p2_global - 1000):
+            # Image is significantly darker than global distribution
+            # Use hybrid normalization: shift by image's own p2, scale by global range
+            self.logger.warning(
+                f"Image has {pixels_below_p2*100:.1f}% pixels below global p2. "
+                f"Using hybrid normalization (img_p2={img_p2:.1f}, global_p2={p2_global:.1f})"
+            )
+            
+            # Use image's own p2 but global p98 for consistent upper range
+            p2_use = img_p2
+            p98_use = p98_global
+            
+            # If image is also very different at high end, use full per-image normalization
+            if img_p98 < (p98_global * 0.5):
+                self.logger.warning(
+                    f"Image also has low p98 ({img_p98:.1f} vs global {p98_global:.1f}). "
+                    f"Using full per-image normalization."
+                )
+                p98_use = img_p98
+        else:
+            # Use global statistics
+            p2_use = p2_global
+            p98_use = p98_global
         
         # Apply percentile normalization
-        image_normalized = (image - p2) / (p98 - p2)
-        image_normalized = torch.clamp(image_normalized, 0, 1)
+        if p98_use > p2_use:
+            image_normalized = (image - p2_use) / (p98_use - p2_use)
+            image_normalized = torch.clamp(image_normalized, 0, 1)
+        else:
+            # Fallback if something went wrong
+            self.logger.warning(f"Invalid percentile range (p2={p2_use}, p98={p98_use}), using simple normalization")
+            image_normalized = image / 65535.0
         
         return image_normalized
     
