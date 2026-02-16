@@ -352,8 +352,9 @@ class DegradationDataset(Dataset):
             psf_sigma_y.append(psf['sigma_y'])
             psf_theta.append(psf['theta'])
         
-        # Shift values from pipeline
-        shift_values = self.pipeline.shift_values  # List of [dx, dy]
+        # Shift values from pipeline - use actual values for ground truth
+        # In stochastic mode, these are the actual sampled shifts, not nominal means
+        shift_values = self.pipeline.actual_shift_values  # List of [dx, dy]
         
         # Generate flow vectors from known shifts
         lr_shape = lr_frames[0].shape  # (H, W) without channel dim
@@ -795,8 +796,9 @@ class MSDataset(Dataset):
         psf_sigma_y = [psf['sigma_y'] for psf in psf_info]
         psf_theta = [psf['theta'] for psf in psf_info]
         
-        # Shift values from pipeline
-        shift_values = self.pipeline.shift_values
+        # Shift values from pipeline - use actual values for ground truth
+        # In stochastic mode, these are the actual sampled shifts, not nominal means
+        shift_values = self.pipeline.actual_shift_values
         
         # Metadata
         metadata = {

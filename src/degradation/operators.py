@@ -66,6 +66,9 @@ class WarpingOperator:
         
         Returns:
             Warped image with same shape as input
+            
+        Note:
+            The actual shift values used are stored in self.last_shift_x_lr and self.last_shift_y_lr
         """
         # Determine actual shift values
         if self.stochastic:
@@ -80,10 +83,19 @@ class WarpingOperator:
             # Clip to reasonable range
             shift_x_hr = np.clip(shift_x_hr, -4.0 * downsampling_factor, 4.0 * downsampling_factor)
             shift_y_hr = np.clip(shift_y_hr, -4.0 * downsampling_factor, 4.0 * downsampling_factor)
+            # Recompute LR shifts from clipped HR shifts for accurate ground truth
+            shift_x_lr = shift_x_hr / downsampling_factor
+            shift_y_lr = shift_y_hr / downsampling_factor
         else:
             # Use deterministic shifts
             shift_x_hr = self.shift_x
             shift_y_hr = self.shift_y
+            shift_x_lr = shift_x_hr / downsampling_factor
+            shift_y_lr = shift_y_hr / downsampling_factor
+        
+        # Store actual shift values for access after apply() call
+        self.last_shift_x_lr = shift_x_lr
+        self.last_shift_y_lr = shift_y_lr
         
         if shift_x_hr == 0.0 and shift_y_hr == 0.0:
             return image.copy()

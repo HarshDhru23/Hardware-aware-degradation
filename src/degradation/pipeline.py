@@ -90,6 +90,10 @@ class DegradationPipeline:
         # Downsampling operator (shared across all frames)
         self.downsample = DownsamplingOperator(config)
         
+        # Track actual shift values used (for stochastic mode ground truth)
+        # This will be updated each time generate_lr_frames is called
+        self.actual_shift_values = self.shift_values.copy()  # Initialize with nominal values
+        
         # Setup logging
         self.logger = logging.getLogger(__name__)
         
@@ -109,14 +113,25 @@ class DegradationPipeline:
             LR frame image (H/factor, W/factor) or (H/factor, W/factor, C)
         """
         shift_lr = self.shift_values[frame_idx]
-        self.logger.debug(f"Generating LR frame {frame_idx} with shift {shift_lr}")
+        self.logger.debug(f"Generating LR frame {frame_idx} with nominal shift {shift_lr}")
         
-        # Step 1: Warping (M_k) - Deterministic sub-pixel shift
+        # Step 1: Warping (M_k) - Sub-pixel shift (deterministic or stochastic)
         warped = self.warp_operators[frame_idx].apply(
             hr_image, 
             seed=seed, 
             downsampling_factor=self.downsampling_factor
         )
+        
+        # Capture actual shift values used (stored in operator after apply())
+        actual_shift_x = self.warp_operators[frame_idx].last_shift_x_lr
+        actual_shift_y = self.warp_operators[frame_idx].last_shift_y_lr
+        
+        # Update actual_shift_values for this frame
+        self.actual_shift_values[frame_idx] = [actual_shift_x, actual_shift_y]
+        
+        # Log actual shift if different from nominal (stochastic mode)
+        if not np.allclose([actual_shift_x, actual_shift_y], shift_lr, atol=0.001):
+            self.logger.debug(f"  Actual stochastic shift: [{actual_shift_x}, {actual_shift_y}]")
         
         # Step 2: Anisotropic Gaussian PSF blur (B_k)
         blurred = self.blur_operators[frame_idx].apply(warped)
@@ -137,6 +152,8 @@ class DegradationPipeline:
     def generate_lr_frames(self, hr_image: np.ndarray, seed: Optional[int] = None) -> List[np.ndarray]:
         """
         Generate LR frames from HR image based on downsampling_mode.
+        
+        Also updates self.actual_shift_values with the actual shifts used.
         
         Args:
             hr_image: High-resolution input image (H, W) or (H, W, C)

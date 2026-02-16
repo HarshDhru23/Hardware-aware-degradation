@@ -93,6 +93,10 @@ def save_lr_sample(sample: Dict, lr_idx: int, output_path: Path) -> None:
     save_dict = {
         'lr': lr_frame.cpu().numpy(),  # [1, H, W]
         'hr': sample['hr'].cpu().numpy(),  # Include corresponding HR
+        # Actual shift values used (stochastic samples in stochastic mode, not means)
+        'actual_shift_x': float(shift_value[0]),
+        'actual_shift_y': float(shift_value[1]),
+        # Legacy fields for compatibility
         'shift_x': float(shift_value[0]),
         'shift_y': float(shift_value[1]),
         'flow_vector': flow_vector.cpu().numpy(),  # [2, H, W]
