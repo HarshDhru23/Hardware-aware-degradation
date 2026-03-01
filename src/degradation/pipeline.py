@@ -168,7 +168,9 @@ class DegradationPipeline:
         
         lr_frames = []
         for i in range(self.num_lr_frames):
-            lr_frame = self.generate_lr_frame(hr_image, frame_idx=i, seed=seed)
+            # Vary seed for each frame to get independent stochastic shifts
+            frame_seed = (seed + i * 1000) if seed is not None else None
+            lr_frame = self.generate_lr_frame(hr_image, frame_idx=i, seed=frame_seed)
             lr_frames.append(lr_frame)
         
         return lr_frames
