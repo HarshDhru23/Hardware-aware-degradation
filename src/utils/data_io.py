@@ -89,8 +89,11 @@ class GeoTIFFLoader:
     def _load_with_rasterio(self, filepath: Path) -> np.ndarray:
         """Load GeoTIFF using rasterio (preferred method)."""
         with rasterio.open(filepath) as src:
-            # Read the first band (PAN images are single-band)
-            image = src.read(1)
+            # Keep PAN as 2D while preserving multiband images as [C, H, W].
+            if src.count == 1:
+                image = src.read(1)
+            else:
+                image = src.read()
             original_dtype = src.dtypes[0]
             
             self.logger.debug(f"Original image dtype: {original_dtype}, range: [{image.min()}, {image.max()}]")

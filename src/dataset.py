@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import yaml
 import logging
 from functools import lru_cache
+import numpy as np
 
 from .degradation.pipeline import DegradationPipeline
 from .utils.data_io import GeoTIFFLoader
@@ -571,7 +572,8 @@ class MSDataset(Dataset):
         first_image = self.loader.load_image(self.hr_files[0])
         if len(first_image.shape) == 2:
             raise ValueError("MS images should have multiple bands, got grayscale image")
-        self.num_bands = first_image.shape[0] if first_image.shape[0] < first_image.shape[-1] else first_image.shape[-1]
+        first_image_chw = self._to_channels_first(first_image)
+        self.num_bands = first_image_chw.shape[0]
         
         self.logger.info(f"Detected {self.num_bands}-band MS data")
         if self.num_bands == 8:
@@ -584,9 +586,9 @@ class MSDataset(Dataset):
         # Initialize degradation pipeline (will be applied per-band)
         self.pipeline = DegradationPipeline(self.config_dict)
         
-        # Get parameters from config
-        self.num_lr_frames = self.config.get('num_lr_frames', 2)
-        self.downsampling_factor = self.config.get('downsampling_factor', 4)
+        # Keep dataset frame count/factor consistent with pipeline behavior.
+        self.num_lr_frames = self.pipeline.num_lr_frames
+        self.downsampling_factor = self.pipeline.downsampling_factor
         self.hr_patch_size = self.config.get('hr_patch_size', 256)
         self.lr_patch_size = self.hr_patch_size // self.downsampling_factor
         
@@ -612,6 +614,31 @@ class MSDataset(Dataset):
     def __len__(self) -> int:
         """Return total number of samples (images × augmentations)."""
         return len(self.hr_files) * self.num_augmentations
+
+    @staticmethod
+    def _to_channels_first(image: np.ndarray) -> torch.Tensor:
+        """
+        Convert 3D image to channels-first format [C, H, W].
+
+        Supports either channels-first [C, H, W] or channels-last [H, W, C].
+        """
+        image_tensor = torch.from_numpy(image)
+
+        if image_tensor.ndim != 3:
+            raise ValueError(f"Expected 3D image, got shape {tuple(image_tensor.shape)}")
+
+        # If first dimension is a plausible band count, treat as [C, H, W].
+        if image_tensor.shape[0] <= 16 and image_tensor.shape[1] > 16 and image_tensor.shape[2] > 16:
+            return image_tensor.float()
+
+        # If last dimension is a plausible band count, convert [H, W, C] -> [C, H, W].
+        if image_tensor.shape[2] <= 16 and image_tensor.shape[0] > 16 and image_tensor.shape[1] > 16:
+            return image_tensor.permute(2, 0, 1).float()
+
+        raise ValueError(
+            f"Unable to infer channel dimension for MS image shape {tuple(image_tensor.shape)}. "
+            "Expected [C,H,W] or [H,W,C] with C <= 16."
+        )
     
     def _load_hr_image_cached(self, file_idx: int) -> torch.Tensor:
         """
@@ -625,19 +652,8 @@ class MSDataset(Dataset):
         """
         filepath = self.hr_files[file_idx]
         image = self.loader.load_image(filepath)  # Returns numpy array
-        
-        # Ensure channels-first format [C, H, W]
-        if len(image.shape) == 3:
-            if image.shape[0] > image.shape[-1]:
-                # Already channels-first [C, H, W]
-                image_tensor = torch.from_numpy(image).float()
-            else:
-                # Channels-last [H, W, C] -> convert to [C, H, W]
-                image_tensor = torch.from_numpy(image).permute(2, 0, 1).float()
-        else:
-            raise ValueError(f"Expected 3D image, got shape {image.shape}")
-        
-        return image_tensor
+
+        return self._to_channels_first(image)
     
     def _apply_global_normalization(self, image: torch.Tensor) -> torch.Tensor:
         """
@@ -763,29 +779,20 @@ class MSDataset(Dataset):
         # Apply global normalization
         hr_image_normalized = self._apply_global_normalization(hr_image_aug)
         
-        # Process each band through degradation pipeline
-        # Use band-specific seed for deterministic but varied degradation per band
+        # Process each band once, then regroup by frame.
+        # Using shared base_seed keeps geometric labels (shift/flow) consistent across bands.
         base_seed = (self.seed if self.seed is not None else 0) + idx
-        
-        lr_frames_all_bands = []  # Will be [num_frames][num_bands, H', W']
-        
+
+        lr_by_band = []  # [num_bands][num_frames, H', W']
+        for band_idx in range(self.num_bands):
+            band = hr_image_normalized[band_idx]
+            lr_frames_band = self._process_band(band, seed=base_seed)
+            lr_by_band.append(lr_frames_band)
+
+        lr_frames_all_bands = []  # [num_frames][num_bands, H', W']
         for frame_idx in range(self.num_lr_frames):
-            lr_frame_bands = []
-            
-            for band_idx in range(self.num_bands):
-                # Get single band
-                band = hr_image_normalized[band_idx]  # [H, W]
-                
-                # Process this band (use combined seed for reproducibility)
-                band_seed = base_seed + frame_idx * 1000 + band_idx
-                lr_frames_band = self._process_band(band, seed=band_seed)
-                
-                # Take the corresponding frame
-                lr_frame_bands.append(lr_frames_band[frame_idx])
-            
-            # Stack all bands for this frame [C, H', W']
-            lr_frame_stacked = torch.stack(lr_frame_bands, dim=0)
-            lr_frames_all_bands.append(lr_frame_stacked)
+            lr_frame_bands = [lr_by_band[band_idx][frame_idx] for band_idx in range(self.num_bands)]
+            lr_frames_all_bands.append(torch.stack(lr_frame_bands, dim=0))
         
         # Extract PSF information (same for all bands)
         psf_info = self._extract_psf_info()
@@ -881,7 +888,7 @@ def collate_fn_ms(batch: List[Dict]) -> Dict[str, Union[torch.Tensor, List]]:
     
     # Collect metadata
     metadata_batch = [sample['metadata'] for sample in batch]
-    
+
     return {
         'hr': hr_batch,
         'lr': lr_batch,
@@ -1018,9 +1025,9 @@ if __name__ == '__main__':
     print("\n" + "="*70)
     print("Test complete!")
     print("="*70)
-    print(f"theta={sample['psf_params']['theta'][0]:.3f}")
-    print(f"  Shift values: {sample['shift_values']}")
-    print(f"  Metadata: {sample['metadata']}")
+    print(f"theta={pan_sample['psf_params']['theta'][0]:.3f}")
+    print(f"  Shift values: {pan_sample['shift_values']}")
+    print(f"  Metadata: {pan_sample['metadata']}")
      
     # Test DataLoader
     print("\nTesting DataLoader...")
