@@ -80,8 +80,25 @@ def save_rgb_png(image_chw: np.ndarray, output_path: Path, rgb_bands: Tuple[int,
         if idx < 0 or idx >= c:
             raise ValueError(f"RGB band index {idx} out of range for image with {c} bands")
 
-    rgb = np.stack([image_chw[r_idx], image_chw[g_idx], image_chw[b_idx]], axis=-1)  # [H, W, 3]
-    rgb_uint8 = np.clip(rgb * 255.0, 0, 255).astype(np.uint8)
+    # Helper function to stretch a single band
+    def stretch_band(band: np.ndarray) -> np.ndarray:
+        # Calculate the 2nd and 98th percentiles for this specific band
+        p2, p98 = np.percentile(band, (2, 98))
+        # Normalize the band based on its own percentiles
+        # Adding 1e-8 prevents division by zero if an image is completely flat
+        stretched = (band - p2) / (p98 - p2 + 1e-8)
+        return np.clip(stretched, 0, 1)
+
+    # Extract and independently stretch R, G, B
+    r = stretch_band(image_chw[r_idx])
+    g = stretch_band(image_chw[g_idx])
+    b = stretch_band(image_chw[b_idx])
+
+    # Stack into [H, W, 3]
+    rgb = np.stack([r, g, b], axis=-1) 
+    
+    # Convert to 8-bit
+    rgb_uint8 = (rgb * 255.0).astype(np.uint8)
 
     Image.fromarray(rgb_uint8, mode="RGB").save(output_path)
 
