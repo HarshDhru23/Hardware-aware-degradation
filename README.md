@@ -97,11 +97,7 @@ Hardware-aware-degradation/
 ├── test_dataset_generation.py         # PAN small test dataset + PNG previews
 ├── test_dataset_generation_ms.py      # MS small test dataset + RGB previews
 ├── compute_global_stats.py            # Per-folder percentile/hist stats
-├── combine_histograms.py              # Merge multiple histogram files
-├── analyze_degradation.py             # Step-wise pipeline visualization
-├── test.py                            # Single-image interactive test
 ├── test_downsampling_mode.py          # Mode-2 vs mode-4 behavior check
-├── convert_npy_to_png.py              # Utility converter
 format
 ├── tests/                             # Pytest tests (mix of current and legacy assumptions)
 └── scripts/process_images.py          # Older patch-extraction pipeline entrypoint
